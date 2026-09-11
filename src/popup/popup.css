@@ -1,0 +1,257 @@
+/**
+ * Popup 样式（400×600 固定尺寸）。
+ * 视觉取自 docs/07 §六 视觉基线：白底、发丝线、单一强调橙。
+ */
+
+html,
+body {
+  width: 400px;
+  height: 600px;
+  overflow: hidden;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  width: 400px;
+  height: 600px;
+  background: var(--tr-canvas);
+}
+
+/* ---------- 头部 ---------- */
+
+.popup-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--tr-hairline);
+}
+
+.popup-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.popup-brand-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  background: var(--tr-accent);
+}
+
+.popup-brand-name {
+  font-size: var(--tr-fs-section);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.popup-icon-btn {
+  all: unset;
+  padding: 4px 10px;
+  border: 1px solid var(--tr-hairline);
+  border-radius: var(--tr-radius-block);
+  color: var(--tr-ink-muted);
+  font-family: inherit;
+  font-size: var(--tr-fs-tiny);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.popup-icon-btn:hover {
+  background: var(--tr-surface-warm);
+  color: var(--tr-ink);
+}
+
+/* ---------- 主体 ---------- */
+
+.popup-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: 14px 16px;
+}
+
+.popup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--tr-hairline);
+  border-radius: var(--tr-radius-card);
+}
+
+.popup-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.popup-card-title {
+  font-size: var(--tr-fs-small);
+  font-weight: 500;
+}
+
+.popup-status {
+  padding: 2px 8px;
+  border-radius: var(--tr-radius-pill);
+  background: var(--tr-surface-warm);
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-tiny);
+}
+
+.popup-status--busy {
+  background: var(--tr-accent-soft);
+  color: var(--tr-accent);
+}
+
+.popup-status--done {
+  background: var(--tr-success-bg);
+  color: var(--tr-success);
+}
+
+.popup-status--muted {
+  color: var(--tr-ink-faint);
+}
+
+.popup-primary {
+  width: 100%;
+  height: 40px;
+  font-size: var(--tr-fs-section);
+}
+
+.popup-primary--ghost {
+  background: var(--tr-canvas);
+  border-color: var(--tr-hairline-strong);
+  color: var(--tr-ink);
+}
+
+.popup-primary--ghost:hover:not(:disabled) {
+  background: var(--tr-surface-warm);
+}
+
+.popup-secondary {
+  display: flex;
+  gap: 8px;
+}
+
+.popup-secondary .tr-btn {
+  flex: 1 1 0;
+}
+
+.popup-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--tr-hairline);
+}
+
+.popup-subsection-label {
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-tiny);
+}
+
+.popup-segmented {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--tr-radius-block);
+  background: var(--tr-surface-warm);
+}
+
+.popup-segment {
+  all: unset;
+  flex: 1 1 0;
+  padding: 6px 0;
+  border-radius: 6px;
+  color: var(--tr-ink-muted);
+  font-family: inherit;
+  font-size: var(--tr-fs-tiny);
+  text-align: center;
+  cursor: pointer;
+}
+
+.popup-segment.is-active {
+  background: var(--tr-canvas);
+  color: var(--tr-ink);
+  font-weight: 500;
+}
+
+/* ---------- 配置卡 ---------- */
+
+.popup-card--config {
+  gap: 4px;
+}
+
+.popup-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.popup-row-label {
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-small);
+}
+
+/* ---------- 未配置空态 ---------- */
+
+.popup-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 18px;
+  border: 1px dashed var(--tr-hairline-strong);
+  border-radius: var(--tr-radius-card);
+  background: var(--tr-surface-warm);
+}
+
+.popup-guide-title {
+  font-size: var(--tr-fs-section);
+  font-weight: 600;
+}
+
+.popup-guide-desc {
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-small);
+  line-height: 1.7;
+}
+
+.popup-guide .tr-btn {
+  align-self: flex-start;
+}
+
+.popup-footnote {
+  color: var(--tr-ink-faint);
+  font-size: var(--tr-fs-tiny);
+  line-height: 1.6;
+  text-align: center;
+}
+
+/* ---------- 底部 ---------- */
+
+.popup-footer {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 16px;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--tr-hairline);
+}
+
+.popup-link {
+  all: unset;
+  color: var(--tr-ink-muted);
+  font-family: inherit;
+  font-size: var(--tr-fs-tiny);
+  cursor: pointer;
+}
+
+.popup-link:hover {
+  color: var(--tr-accent);
+}

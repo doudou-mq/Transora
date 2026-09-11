@@ -1,0 +1,1080 @@
+/**
+ * 内容脚本注入样式。
+ *
+ * 注入 UI 降噪原则（docs/07 §六）：进入宿主网页的 UI **只借「橙色 + 发丝线 + 8px 圆角」**，
+ * 不搬米色画布与大面积白。译文块 = 半透明暖白底 + 3px 橙色左条。
+ *
+ * 隔离手段：
+ *  1. 所有选择器都带 `transora-` 前缀 class，且关键规则用**双 class** 提升特异性，
+ *     压过宿主页面常见的 `div {}` / `button {}` 之类的宽选择器；
+ *  2. 我们自己的按钮用 `all: unset` 做完全重置，再逐项声明；
+ *  3. 挂载点 `.transora-root` 为零尺寸 fixed 容器，不参与宿主页面布局。
+ *
+ * 本文件通过构建插件写入 manifest 的 `content_scripts.css`，
+ * 走扩展 CSS 通道注入，不受宿主页面 CSP 的 `style-src` 限制（docs/00 §G-3 风险 3）。
+ */
+
+/* ================================================================== */
+/* 0. 本地变量（前缀 --transora-，不污染宿主页面的自定义属性命名空间）      */
+/* ================================================================== */
+
+:root {
+  --transora-accent: #f54e00;
+  --transora-accent-hover: #d94400;
+  --transora-ink: #26251e;
+  --transora-muted: #807d72;
+  --transora-faint: #a8a49a;
+  --transora-hairline: #efeee8;
+  --transora-hairline-strong: #e2e0d8;
+  --transora-warm: #f7f7f4;
+  --transora-danger: #c2410c;
+  --transora-danger-bg: #fbf1ec;
+  --transora-success: #1f7a4d;
+  --transora-font: Inter, 'Noto Sans SC', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+}
+
+/* ================================================================== */
+/* 1. 译文块（进入宿主页面，降噪版）                                     */
+/* ================================================================== */
+
+.transora-tr.transora-tr {
+  display: block;
+  position: relative;
+  box-sizing: border-box;
+  float: none;
+  clear: none;
+  width: auto;
+  max-width: 100%;
+  min-width: 0;
+  margin: 6px 0 10px;
+  padding: 8px 30px 8px 12px;
+  border: 0;
+  border-left: 3px solid var(--transora-accent);
+  border-radius: 8px;
+  background: rgba(247, 247, 244, 0.94);
+  color: var(--transora-ink);
+  font-family: inherit;
+  font-size: var(--transora-fs, 1em);
+  font-style: normal;
+  font-weight: inherit;
+  line-height: 1.7;
+  letter-spacing: normal;
+  text-align: left;
+  text-indent: 0;
+  text-transform: none;
+  text-shadow: none;
+  text-decoration: none;
+  white-space: normal;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  list-style: none;
+  visibility: visible;
+  opacity: 1;
+  transform: none;
+  filter: none;
+  box-shadow: none;
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.transora-tr.transora-tr:hover {
+  box-shadow: 0 1px 2px rgba(38, 37, 30, 0.06);
+}
+
+.transora-tr-body.transora-tr-body {
+  display: block;
+  margin: 0;
+  padding: 0;
+  white-space: pre-wrap;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-align: inherit;
+}
+
+/* 折叠按钮：默认隐形，悬停才出现（降噪） */
+.transora-tr-fold.transora-tr-fold {
+  all: unset;
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  color: var(--transora-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.transora-tr.transora-tr:hover .transora-tr-fold {
+  opacity: 1;
+}
+
+.transora-tr-fold.transora-tr-fold:hover {
+  background: var(--transora-hairline);
+  color: var(--transora-ink);
+}
+
+.transora-tr--folded .transora-tr-body {
+  display: none;
+}
+
+.transora-tr--folded .transora-tr-fold {
+  opacity: 1;
+  transform: rotate(-90deg);
+}
+
+.transora-tr--short .transora-tr-fold {
+  display: none;
+}
+
+/* 加载态：骨架条（不改变块高度量级，避免页面抖动） */
+.transora-tr--loading .transora-tr-body {
+  min-height: 1.6em;
+}
+
+.transora-tr--loading .transora-tr-body::after {
+  content: '';
+  display: block;
+  width: 58%;
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #efeee8 25%, #e2e0d8 37%, #efeee8 63%);
+  background-size: 400% 100%;
+  animation: transora-shimmer 1.4s ease infinite;
+}
+
+/* 失败态：块内联占位，不弹 alert（docs/00 §D-1） */
+.transora-tr--error.transora-tr--error {
+  border-left-color: var(--transora-danger);
+  background: var(--transora-danger-bg);
+}
+
+.transora-tr-error-text {
+  color: var(--transora-danger);
+}
+
+.transora-tr-error-retry.transora-tr-error-retry {
+  all: unset;
+  margin-left: 8px;
+  color: var(--transora-accent);
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* ================================================================== */
+/* 2. 对照三态（FR-16）                                                 */
+/* ================================================================== */
+
+.transora-mode-original .transora-tr {
+  display: none !important;
+}
+
+.transora-mode-translation .transora-src {
+  display: none !important;
+}
+
+/**
+ * 内嵌译文块（父级为 flex/grid）场景：不能用 display:none（会连译文一起藏掉），
+ * 改为把原文文字缩为 0，译文块用注入时锁定的 --transora-fs 自保字号。
+ * 已知代价：原文块内自带显式 font-size 的子元素与图片仍会显示。
+ */
+.transora-mode-translation .transora-src-inline {
+  font-size: 0 !important;
+}
+
+.transora-highlight.transora-highlight {
+  outline: 2px solid var(--transora-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* ================================================================== */
+/* 3. 挂载点                                                           */
+/* ================================================================== */
+
+.transora-root.transora-root {
+  position: fixed;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  pointer-events: none;
+  font-family: var(--transora-font);
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--transora-ink);
+  z-index: 2147482000;
+}
+
+.transora-root.transora-root > * {
+  pointer-events: auto;
+}
+
+/* ================================================================== */
+/* 4. G10 悬浮按钮                                                     */
+/* ================================================================== */
+
+.transora-fab.transora-fab {
+  position: fixed;
+  top: 50%;
+  right: 16px;
+  display: block;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  transform: translateY(-50%);
+}
+
+.transora-fab.transora-fab--hidden {
+  display: none !important;
+}
+
+/**
+ * 侧边栏打开时悬浮按钮整体左移让位，否则它会被侧边栏盖住、用户再也点不到。
+ * 宽度来自 JS 注入的 --transora-sidebar-w（见 ui/sidebar.ts）。
+ */
+.transora-sidebar-open .transora-fab {
+  right: calc(16px + var(--transora-sidebar-w, 400px) + 12px);
+}
+
+.transora-fab-btn.transora-fab-btn {
+  all: unset;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 40px;
+  height: 40px;
+  border-radius: 9999px;
+  background: var(--transora-accent);
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(245, 78, 0, 0.28);
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.transora-fab-btn.transora-fab-btn:hover {
+  background: var(--transora-accent-hover);
+  transform: scale(1.04);
+}
+
+.transora-fab-badge.transora-fab-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  border: 2px solid #ffffff;
+  border-radius: 9999px;
+  background: var(--transora-ink);
+  color: #ffffff;
+  font-family: var(--transora-font);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.transora-fab-badge--done {
+  background: var(--transora-success);
+}
+
+.transora-fab-menu.transora-fab-menu {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  box-sizing: border-box;
+  max-height: 70vh;
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 30px rgba(38, 37, 30, 0.14);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-50%) translateX(8px) scale(0.98);
+  transform-origin: right center;
+  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+}
+
+.transora-fab.transora-fab--open .transora-fab-menu {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(-50%) translateX(0) scale(1);
+}
+
+.transora-fab-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.transora-fab-item.transora-fab-item {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  color: var(--transora-ink);
+  font-family: var(--transora-font);
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.transora-fab-item.transora-fab-item:hover:not(:disabled) {
+  background: var(--transora-warm);
+}
+
+.transora-fab-item.transora-fab-item:disabled {
+  color: var(--transora-faint);
+  cursor: not-allowed;
+}
+
+.transora-fab-item-icon {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--transora-muted);
+}
+
+.transora-fab-item.transora-fab-item:hover:not(:disabled) .transora-fab-item-icon {
+  color: var(--transora-accent);
+}
+
+.transora-fab-item-label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+}
+
+.transora-fab-item-hint {
+  flex: 0 0 auto;
+  color: var(--transora-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* ================================================================== */
+/* 5. G11 侧边栏 Slide                                                 */
+/* ================================================================== */
+
+.transora-sidebar.transora-sidebar {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  max-width: 100vw;
+  border-left: 1px solid var(--transora-hairline);
+  background: #ffffff;
+  box-shadow: -8px 0 24px rgba(38, 37, 30, 0.08);
+  font-family: var(--transora-font);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--transora-ink);
+  transform: translateX(100%);
+  transition: transform 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.transora-sidebar.transora-sidebar--open {
+  transform: translateX(0);
+}
+
+.transora-sb-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px 10px;
+}
+
+.transora-sb-title {
+  flex: 1 1 auto;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.transora-sb-progress {
+  padding: 2px 8px;
+  border-radius: 9999px;
+  background: var(--transora-warm);
+  color: var(--transora-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.transora-sb-close.transora-sb-close {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--transora-muted);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.transora-sb-close.transora-sb-close:hover {
+  background: var(--transora-warm);
+  color: var(--transora-ink);
+}
+
+.transora-sb-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--transora-hairline);
+}
+
+.transora-sb-tab.transora-sb-tab {
+  all: unset;
+  position: relative;
+  padding: 8px 10px 10px;
+  color: var(--transora-muted);
+  font-family: var(--transora-font);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.transora-sb-tab.transora-sb-tab:hover {
+  color: var(--transora-ink);
+}
+
+.transora-sb-tab.transora-sb-tab.is-active {
+  color: var(--transora-ink);
+  font-weight: 500;
+}
+
+.transora-sb-tab.transora-sb-tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--transora-accent);
+}
+
+.transora-sb-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 12px 16px;
+}
+
+.transora-sb-entry.transora-sb-entry {
+  all: unset;
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.transora-sb-entry.transora-sb-entry:hover {
+  background: var(--transora-warm);
+}
+
+.transora-sb-entry-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-bottom: 6px;
+}
+
+.transora-sb-entry-index {
+  flex: 0 0 auto;
+  min-width: 18px;
+  color: var(--transora-faint);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.8;
+}
+
+.transora-sb-entry-source {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--transora-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.transora-sb-entry-translated {
+  padding-left: 5px;
+  border-left: 2px solid var(--transora-accent);
+  color: var(--transora-ink);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.transora-sb-entry-translated--muted {
+  border-left-color: var(--transora-hairline-strong);
+  color: var(--transora-faint);
+}
+
+.transora-sb-entry-translated--error {
+  border-left-color: var(--transora-danger);
+  color: var(--transora-danger);
+}
+
+.transora-sb-record {
+  padding: 10px;
+  border-bottom: 1px solid var(--transora-hairline);
+}
+
+.transora-sb-record-meta {
+  margin-top: 6px;
+  color: var(--transora-faint);
+  font-size: 11px;
+}
+
+.transora-sb-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: center;
+  padding: 40px 20px;
+  color: var(--transora-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.transora-sb-empty-btn.transora-sb-empty-btn {
+  all: unset;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--transora-accent);
+  color: #ffffff;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.transora-sb-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border: 1px dashed var(--transora-hairline-strong);
+  border-radius: 10px;
+  background: var(--transora-warm);
+}
+
+.transora-sb-compare-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.transora-sb-compare-desc,
+.transora-sb-compare-list {
+  margin: 0;
+  padding: 0;
+  color: var(--transora-muted);
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.transora-sb-compare-list {
+  padding-left: 16px;
+  list-style: disc;
+}
+
+.transora-sb-compare-pill {
+  align-self: flex-start;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  background: #ffffff;
+  color: var(--transora-accent);
+  font-size: 11px;
+}
+
+.transora-sb-foot {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+  padding: 10px 16px;
+  border-top: 1px solid var(--transora-hairline);
+}
+
+.transora-sb-segmented {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--transora-warm);
+}
+
+.transora-sb-segment.transora-sb-segment {
+  all: unset;
+  flex: 1 1 0;
+  padding: 5px 0;
+  border-radius: 6px;
+  color: var(--transora-muted);
+  font-family: var(--transora-font);
+  font-size: 12px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.transora-sb-segment.transora-sb-segment.is-active {
+  background: #ffffff;
+  color: var(--transora-ink);
+  font-weight: 500;
+}
+
+.transora-sb-foot-btn.transora-sb-foot-btn {
+  all: unset;
+  flex: 0 0 auto;
+  padding: 6px 10px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 8px;
+  color: var(--transora-muted);
+  font-family: var(--transora-font);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.transora-sb-foot-btn.transora-sb-foot-btn:hover {
+  background: var(--transora-warm);
+  color: var(--transora-ink);
+}
+
+/* ================================================================== */
+/* 6. G4 跟随图标 + G5 划词内容块                                       */
+/* ================================================================== */
+
+.transora-sel-icon.transora-sel-icon {
+  all: unset;
+  position: fixed;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  background: var(--transora-accent);
+  color: #ffffff;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(245, 78, 0, 0.3);
+  transition: background 0.12s ease, transform 0.12s ease;
+}
+
+.transora-sel-icon.transora-sel-icon--open {
+  display: flex;
+}
+
+.transora-sel-icon.transora-sel-icon:hover {
+  background: var(--transora-accent-hover);
+  transform: scale(1.06);
+}
+
+.transora-sel-card.transora-sel-card {
+  position: fixed;
+  box-sizing: border-box;
+  display: none;
+  flex-direction: column;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 32px rgba(38, 37, 30, 0.16);
+  font-family: var(--transora-font);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--transora-ink);
+}
+
+.transora-sel-card.transora-sel-card--open {
+  display: flex;
+}
+
+.transora-sel-header {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--transora-hairline);
+}
+
+.transora-sel-langs {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+/* 保留原生下拉箭头，因此不用 all: unset，改为逐项声明 */
+.transora-sel-select.transora-sel-select {
+  box-sizing: border-box;
+  max-width: 104px;
+  padding: 3px 6px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 6px;
+  background: #ffffff;
+  color: var(--transora-ink);
+  font-family: var(--transora-font);
+  font-size: 12px;
+  line-height: 1.4;
+  outline: none;
+  cursor: pointer;
+}
+
+.transora-sel-arrow {
+  flex: 0 0 auto;
+  color: var(--transora-faint);
+  font-size: 11px;
+}
+
+.transora-sel-target {
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--transora-muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transora-sel-icon-btn.transora-sel-icon-btn {
+  all: unset;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  color: var(--transora-muted);
+  cursor: pointer;
+}
+
+.transora-sel-icon-btn.transora-sel-icon-btn:hover {
+  background: var(--transora-warm);
+  color: var(--transora-ink);
+}
+
+.transora-sel-models {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  overflow-x: auto;
+  padding: 8px 10px 0;
+}
+
+.transora-sel-model.transora-sel-model {
+  all: unset;
+  flex: 0 0 auto;
+  padding: 4px 10px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 9999px;
+  color: var(--transora-muted);
+  font-family: var(--transora-font);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.transora-sel-model.transora-sel-model.is-active {
+  border-color: var(--transora-accent);
+  background: #fdf0e9;
+  color: var(--transora-accent);
+  font-weight: 500;
+}
+
+.transora-sel-body {
+  flex: 1 1 auto;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 10px;
+}
+
+.transora-sel-source {
+  display: -webkit-box;
+  overflow: hidden;
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--transora-hairline);
+  color: var(--transora-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.transora-sel-translated {
+  padding-left: 8px;
+  border-left: 3px solid var(--transora-accent);
+  font-size: 13px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+}
+
+.transora-sel-loading {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  height: 20px;
+}
+
+.transora-sel-loading i {
+  display: block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--transora-hairline-strong);
+  animation: transora-bounce 1s infinite ease-in-out;
+}
+
+.transora-sel-loading i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+
+.transora-sel-loading i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+
+.transora-sel-error {
+  color: var(--transora-danger);
+  font-size: 13px;
+}
+
+.transora-sel-error-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.transora-sel-text-btn.transora-sel-text-btn {
+  all: unset;
+  color: var(--transora-accent);
+  font-family: var(--transora-font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.transora-sel-foot {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--transora-hairline);
+  background: var(--transora-warm);
+}
+
+.transora-sel-foot-btn.transora-sel-foot-btn {
+  all: unset;
+  display: flex;
+  flex: 1 1 0;
+  gap: 5px;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 6px;
+  border-radius: 6px;
+  color: var(--transora-muted);
+  font-family: var(--transora-font);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.transora-sel-foot-btn.transora-sel-foot-btn:hover {
+  background: #ffffff;
+  color: var(--transora-ink);
+}
+
+.transora-sel-foot-btn.transora-sel-foot-btn.is-done {
+  color: var(--transora-success);
+}
+
+/* ================================================================== */
+/* 7. G12 未配置引导卡（跨表面复用）                                     */
+/* ================================================================== */
+
+.transora-guide.transora-guide {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  margin: 6px 4px;
+  padding: 12px;
+  border: 1px dashed var(--transora-hairline-strong);
+  border-radius: 8px;
+  background: var(--transora-warm);
+}
+
+.transora-guide.transora-guide--compact {
+  margin: 4px 4px 6px;
+  padding: 10px;
+}
+
+.transora-guide-title {
+  color: var(--transora-ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.transora-guide-desc {
+  color: var(--transora-muted);
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.transora-guide-btn.transora-guide-btn {
+  all: unset;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--transora-accent);
+  color: #ffffff;
+  font-family: var(--transora-font);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.transora-guide-btn.transora-guide-btn:hover {
+  background: var(--transora-accent-hover);
+}
+
+/* ================================================================== */
+/* 8. H2 Toast                                                         */
+/* ================================================================== */
+
+.transora-toast.transora-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  box-sizing: border-box;
+  max-width: 360px;
+  padding: 10px 16px;
+  border-radius: 8px;
+  background: var(--transora-ink);
+  color: #ffffff;
+  font-family: var(--transora-font);
+  font-size: 13px;
+  line-height: 1.5;
+  pointer-events: none !important;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateX(-50%) translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s;
+}
+
+.transora-toast.transora-toast--visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+}
+
+.transora-toast[data-kind='success'] {
+  background: var(--transora-success);
+}
+
+.transora-toast[data-kind='error'] {
+  background: var(--transora-danger);
+}
+
+/* ================================================================== */
+/* 9. 动效                                                             */
+/* ================================================================== */
+
+@keyframes transora-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+@keyframes transora-bounce {
+  0%,
+  80%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.5;
+  }
+  40% {
+    transform: translateY(-4px);
+    opacity: 1;
+  }
+}
+
+/* ================================================================== */
+/* 10. 指针事件兜底                                                     */
+/* ================================================================== */
+
+/**
+ * 根容器是 `pointer-events: none`（否则零尺寸的 fixed 容器会挡住整页），
+ * 顶层子元素由 `.transora-root > *` 显式恢复为 auto。
+ *
+ * 但组件内部的 `all: unset` 会把 `pointer-events` 重置为它的「继承」语义，
+ * 于是**直接挂在根容器下的元素**（如划词跟随图标）会继承到 none，变成看得见点不动。
+ * 这里放在文件末尾统一兜底：同名同权重，靠顺序取胜。
+ */
+.transora-root .transora-fab-btn,
+.transora-root .transora-fab-item,
+.transora-root .transora-fab-menu,
+.transora-root .transora-sidebar,
+.transora-root .transora-sel-icon,
+.transora-root .transora-sel-card,
+.transora-root .transora-guide-btn,
+.transora-root .transora-toast {
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transora-tr--loading .transora-tr-body::after,
+  .transora-sel-loading i {
+    animation: none;
+  }
+}

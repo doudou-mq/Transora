@@ -1,0 +1,227 @@
+/**
+ * 产品界面设计 token —— 取自 docs/07 §六 视觉基线（Cursor Design System）。
+ *
+ * ⚠️ 本文件用于**扩展自己的页面**（Popup / 新标签页）。
+ *    注入宿主网页的 UI 另有降噪版规范，只用「橙色 + 发丝线 + 8px 圆角」，
+ *    见 src/content/styles.css。
+ */
+
+:root {
+  /* 画布与面 */
+  --tr-canvas: #ffffff;
+  --tr-surface-warm: #f7f7f4;
+  --tr-surface-sunken: #fbfbf9;
+
+  /* 文字 */
+  --tr-ink: #26251e;
+  --tr-ink-muted: #807d72;
+  --tr-ink-faint: #a8a49a;
+  --tr-on-accent: #ffffff;
+
+  /* 线与强调 */
+  --tr-hairline: #efeee8;
+  --tr-hairline-strong: #e2e0d8;
+  --tr-accent: #f54e00;
+  --tr-accent-hover: #d94400;
+  --tr-accent-soft: #fdf0e9;
+
+  /* 语义色 */
+  --tr-danger: #c2410c;
+  --tr-danger-bg: #fbf1ec;
+  --tr-success: #1f7a4d;
+  --tr-success-bg: #eef7f2;
+
+  /* 圆角 */
+  --tr-radius-card: 10px;
+  --tr-radius-block: 8px;
+  --tr-radius-pill: 9999px;
+
+  /* 间距 */
+  --tr-gap-xs: 4px;
+  --tr-gap-sm: 8px;
+  --tr-gap-md: 12px;
+  --tr-gap-lg: 16px;
+  --tr-gap-xl: 24px;
+
+  /* 字体 */
+  --tr-font: Inter, 'Noto Sans SC', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --tr-font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* 字号 */
+  --tr-fs-display: 24px;
+  --tr-fs-title: 18px;
+  --tr-fs-section: 15px;
+  --tr-fs-body: 14px;
+  --tr-fs-small: 13px;
+  --tr-fs-tiny: 12px;
+
+  /* 阴影（克制使用，仅在浮起元素上） */
+  --tr-shadow-card: 0 1px 2px rgba(38, 37, 30, 0.04), 0 4px 12px rgba(38, 37, 30, 0.06);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--tr-font);
+  font-size: var(--tr-fs-body);
+  line-height: 1.6;
+  color: var(--tr-ink);
+  background: var(--tr-canvas);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- 通用原子组件 ---------- */
+
+.tr-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--tr-radius-block);
+  border: 1px solid var(--tr-hairline);
+  background: var(--tr-canvas);
+  color: var(--tr-ink);
+  font-family: inherit;
+  font-size: var(--tr-fs-body);
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.tr-btn:hover:not(:disabled) {
+  background: var(--tr-surface-warm);
+}
+
+.tr-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.tr-btn--primary {
+  background: var(--tr-accent);
+  border-color: var(--tr-accent);
+  color: var(--tr-on-accent);
+}
+
+.tr-btn--primary:hover:not(:disabled) {
+  background: var(--tr-accent-hover);
+  border-color: var(--tr-accent-hover);
+}
+
+.tr-btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--tr-ink-muted);
+}
+
+.tr-btn--ghost:hover:not(:disabled) {
+  background: var(--tr-surface-warm);
+  color: var(--tr-ink);
+}
+
+.tr-btn--danger {
+  color: var(--tr-danger);
+  border-color: var(--tr-hairline);
+}
+
+.tr-btn--danger:hover:not(:disabled) {
+  background: var(--tr-danger-bg);
+}
+
+.tr-btn--sm {
+  height: 30px;
+  padding: 0 12px;
+  font-size: var(--tr-fs-small);
+}
+
+.tr-input,
+.tr-select,
+.tr-textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: var(--tr-radius-block);
+  background: var(--tr-canvas);
+  font-family: inherit;
+  font-size: var(--tr-fs-body);
+  color: var(--tr-ink);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.tr-input:focus,
+.tr-select:focus,
+.tr-textarea:focus {
+  border-color: var(--tr-accent);
+  box-shadow: 0 0 0 3px rgba(245, 78, 0, 0.12);
+}
+
+.tr-input::placeholder,
+.tr-textarea::placeholder {
+  color: var(--tr-ink-faint);
+}
+
+.tr-textarea {
+  min-height: 84px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.tr-mono {
+  font-family: var(--tr-font-mono);
+}
+
+.tr-card {
+  background: var(--tr-canvas);
+  border: 1px solid var(--tr-hairline);
+  border-radius: var(--tr-radius-card);
+}
+
+.tr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 10px;
+  border-radius: var(--tr-radius-pill);
+  background: var(--tr-surface-warm);
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-tiny);
+  white-space: nowrap;
+}
+
+.tr-pill--accent {
+  background: var(--tr-accent-soft);
+  color: var(--tr-accent);
+}
+
+.tr-hairline {
+  height: 1px;
+  background: var(--tr-hairline);
+  border: 0;
+  margin: 0;
+}
+
+.tr-muted {
+  color: var(--tr-ink-muted);
+}
+
+.tr-tiny {
+  font-size: var(--tr-fs-tiny);
+}
+
+.tr-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--tr-gap-sm);
+  padding: 40px 24px;
+  text-align: center;
+  color: var(--tr-ink-muted);
+}

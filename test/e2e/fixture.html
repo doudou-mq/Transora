@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Transora E2E Fixture</title>
+    <style>
+      body {
+        font-family: Georgia, serif;
+        max-width: 760px;
+        margin: 40px auto;
+        padding: 0 20px;
+        line-height: 1.7;
+        color: #222;
+      }
+      h1 {
+        font-size: 30px;
+      }
+      /* 故意用 flex 容器包一段文字：这是译文注入最容易把页面搞乱的场景 */
+      .flexrow {
+        display: flex;
+        gap: 16px;
+        align-items: flex-start;
+        border: 1px dashed #ccc;
+        padding: 12px;
+      }
+      .flexrow p {
+        margin: 0;
+        flex: 1;
+      }
+      pre {
+        background: #f4f4f4;
+        padding: 12px;
+        border-radius: 6px;
+        overflow: auto;
+      }
+      li {
+        margin: 6px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>A Practical Guide to Browser Extensions</h1>
+    <p>
+      Browser extensions are small programs that customize the browsing experience. They can
+      modify pages, add toolbar buttons, and connect to external services.
+    </p>
+    <p>
+      Modern extensions use Manifest V3, which replaces persistent background pages with service
+      workers that the browser may suspend at any time.
+    </p>
+
+    <div class="flexrow">
+      <p>
+        This paragraph sits inside a flex container, which is the tricky case for injecting a
+        translation block.
+      </p>
+    </div>
+
+    <h2>Why translation matters</h2>
+    <ul>
+      <li>Readers can compare the original and the translation side by side.</li>
+      <li>Technical terms stay visible in their original form.</li>
+      <li>Switching the display mode never re-sends a request.</li>
+    </ul>
+
+    <pre><code>const response = await fetch(url, { method: 'POST' });
+console.log('this code block must NOT be translated');</code></pre>
+
+    <p>
+      Finally, this closing sentence exists so the page has content near the bottom of the viewport
+      as well.
+    </p>
+  </body>
+</html>
