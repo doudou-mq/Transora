@@ -133,9 +133,9 @@ try {
     (await page.locator('[data-transora="fab"] .transora-guide').count()) > 0,
   )
   check(
-    '未配置时「翻译本页」置灰（D-4）',
+    '未配置时「翻译当前页面」置灰（D-4）',
     await page
-      .locator('[data-transora="fab"] .transora-fab-item', { hasText: '翻译本页' })
+      .locator('[data-transora="fab"] .transora-fab-item', { hasText: '翻译当前页面' })
       .first()
       .isDisabled(),
   )
@@ -196,7 +196,7 @@ try {
   await page.hover('[data-transora="fab"]')
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
   await page
-    .locator('[data-transora="fab"] .transora-fab-item', { hasText: '翻译本页' })
+    .locator('[data-transora="fab"] .transora-fab-item', { hasText: '翻译当前页面' })
     .first()
     .click()
 
@@ -263,19 +263,17 @@ try {
   await page.hover('[data-transora="fab"]')
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
   await page
-    .locator('[data-transora="fab"] .transora-fab-item', { hasText: '本页对照' })
+    .locator('[data-transora="fab"] .transora-fab-item', { hasText: '打开侧边栏' })
     .first()
     .click()
   await page.waitForSelector('.transora-sidebar.transora-sidebar--open', { timeout: 5000 })
   const entries = await page.locator('.transora-sb-entry').count()
   check('侧边栏 Slide 打开并列出本页对照', entries > 0, `entries=${entries}`)
   check(
-    '侧边栏打开时悬浮按钮让位（不被盖住）',
-    await page.evaluate(() => {
-      const fab = document.querySelector('[data-transora="fab"]')
-      const rect = fab.getBoundingClientRect()
-      return rect.right < window.innerWidth - 400
-    }),
+    '侧边栏打开时悬浮按钮隐藏（Q3-B：严格贴右，不让位）',
+    await page.evaluate(
+      () => getComputedStyle(document.querySelector('[data-transora="fab"]')).display === 'none',
+    ),
   )
   await settle(page)
   await page.screenshot({ path: path.join(OUT, '05-sidebar.png') })
@@ -316,10 +314,125 @@ try {
     '划词内容块不含多模型对比（A1 / X6）',
     (await page.locator('.transora-sel-card .transora-sb-compare').count()) === 0,
   )
+
+  /* ---------- G4 / G5 结构与几何 ---------- */
+  // 几何必须在「静止态」量：上一步 click 之后指针仍停在图标上，:hover 的 scale(1.08)
+  // 会把盒子量成 26×26、外扩量成 7px。先把指针移开并等过渡结束。
+  await page.mouse.move(20, 20)
+  await page.waitForTimeout(260)
+
+  const iconGeo = await page.evaluate(() => {
+    const icon = document.querySelector('.transora-sel-icon')
+    const box = icon.getBoundingClientRect()
+    const cs = getComputedStyle(icon)
+    const sel = window.getSelection()
+    const rect = sel?.rangeCount ? sel.getRangeAt(0).getBoundingClientRect() : null
+    // 侧边栏占掉的宽度要排除，图标只能落在剩余可用区内（S5：右侧越界时贴左）
+    const available = window.innerWidth - 400
+    return {
+      // 用 computed width/height：它反映 CSS 盒尺寸，不受 hover 的 transform 缩放干扰
+      w: Math.round(parseFloat(cs.width)),
+      h: Math.round(parseFloat(cs.height)),
+      radius: cs.borderRadius,
+      glyph: icon.textContent.trim(),
+      dy: rect ? Math.round(box.top - rect.bottom) : null,
+      dx: rect ? Math.round(box.left - rect.right) : null,
+      insideAvailable: box.right <= available - 8 + 0.5,
+    }
+  })
+  check(
+    '跟随图标 24×24 · 圆角 8 · 字符「译」· 下外扩 8px（G4 / S5）',
+    iconGeo.w === 24 &&
+      iconGeo.h === 24 &&
+      iconGeo.radius === '8px' &&
+      iconGeo.glyph === '译' &&
+      iconGeo.dy === 8 &&
+      // 本用例里侧边栏是打开的 → 通常走「贴左」分支；两种都符合 S5
+      (iconGeo.dx === 8 || iconGeo.insideAvailable),
+    JSON.stringify(iconGeo),
+  )
+  check(
+    '内容块宽度 360 · 圆角 12 · 投影 0 8px 24px（G5 / Q5-C）',
+    await page.evaluate(() => {
+      const card = document.querySelector('.transora-sel-card')
+      const cs = getComputedStyle(card)
+      return (
+        Math.round(card.getBoundingClientRect().width) === 360 &&
+        cs.borderRadius === '12px' &&
+        cs.boxShadow.includes('0px 8px 24px')
+      )
+    }),
+  )
+  check(
+    '内容块含「供应商 / 模型」两级切换（G5 ④）',
+    await page.evaluate(
+      () =>
+        document.querySelectorAll('.transora-sel-pill').length >= 1 &&
+        document.querySelectorAll('.transora-sel-chip').length >= 1 &&
+        [...document.querySelectorAll('.transora-sel-switch-label')]
+          .map((e) => e.textContent)
+          .join('/') === '供应商/模型',
+    ),
+  )
+  check(
+    '内容块元信息行 = 模型 chip + 耗时/token + 语言对（G5 ③）',
+    await page.evaluate(() => {
+      const model = document.querySelector('.transora-sel-meta-model')?.textContent?.trim() ?? ''
+      const stat = document.querySelector('.transora-sel-meta-stat')?.textContent?.trim() ?? ''
+      const lang = document.querySelector('.transora-sel-meta-lang')?.textContent?.trim() ?? ''
+      return model.length > 0 && /\d+(\.\d+)?(ms|s)/.test(stat) && lang.includes('→')
+    }),
+  )
+  check(
+    '内容块动作行 = 设置 · 打开侧边栏 · 复制译文 + Esc 关闭（G5 ⑤）',
+    await page.evaluate(
+      () =>
+        [...document.querySelectorAll('.transora-sel-act')].map((e) => e.textContent).join('/') ===
+          '设置/打开侧边栏/复制译文' &&
+        document.querySelector('.transora-sel-esc')?.textContent?.trim() === 'Esc 关闭',
+    ),
+  )
+  check(
+    '内容块已无源语言下拉（Q6-A）',
+    (await page.locator('.transora-sel-card select').count()) === 0,
+  )
+
+  /* ---------- S5：悬停图标即展开（无需点击） ---------- */
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(250)
+  await page.evaluate(() => {
+    const target =
+      document.querySelectorAll('article p, body > p')[1] ?? document.querySelector('p')
+    const range = document.createRange()
+    range.selectNodeContents(target)
+    const selection = window.getSelection()
+    selection.removeAllRanges()
+    selection.addRange(range)
+    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }))
+  })
+  await page.waitForSelector('.transora-sel-icon.transora-sel-icon--open', { timeout: 5000 })
+  const hoverPoint = await page.evaluate(() => {
+    const box = document.querySelector('.transora-sel-icon').getBoundingClientRect()
+    return { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+  })
+  await page.mouse.move(hoverPoint.x, hoverPoint.y)
+  let hoverOpened = true
+  try {
+    await page.waitForSelector('.transora-sel-card.transora-sel-card--open', { timeout: 4000 })
+  } catch {
+    hoverOpened = false
+  }
+  check('悬停图标即展开内容块（S5 · 无需点击）', hoverOpened)
+  await page.keyboard.press('Escape')
+  await page.waitForTimeout(200)
+
   await settle(page)
   await page.screenshot({ path: path.join(OUT, '07-selection-card.png') })
 
   /* ---------- 恢复原文 ---------- */
+  // 悬浮按钮严格贴右（不让位），侧边栏打开时整体隐藏；先关掉侧边栏才能继续操作 FAB
+  await page.click('.transora-sb-close')
+  await page.waitForTimeout(400)
   await page.hover('[data-transora="fab"]')
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
   await page.locator('[data-transora="fab"] .transora-fab-item', { hasText: '恢复原文' }).first().click()

@@ -129,11 +129,16 @@ export async function translateBlocks(
   if (activeSession === session) activeSession = null
 }
 
+/** 单条文本翻译结果（划词 / 单块重试）。耗时与 token 供 G5 元信息行展示 */
+export type SingleTranslateResult =
+  | { ok: true; text: string; latencyMs: number; totalTokens: number }
+  | { ok: false; error: ErrorInfo }
+
 /** 单条文本翻译（划词 / 单块重试） */
 export async function translateText(
   text: string,
   options: RunOptions,
-): Promise<{ ok: true; text: string } | { ok: false; error: ErrorInfo }> {
+): Promise<SingleTranslateResult> {
   const sessionId = uid('one')
   try {
     const response = await requestBatch(sessionId, options.model.id, [text], options)
@@ -142,7 +147,12 @@ export async function translateText(
     }
     const translated = response.translations[0]
     if (!translated) return { ok: false, error: errorInfoOf('refused') }
-    return { ok: true, text: translated }
+    return {
+      ok: true,
+      text: translated,
+      latencyMs: response.latencyMs ?? 0,
+      totalTokens: response.totalTokens ?? 0,
+    }
   } catch {
     return { ok: false, error: errorInfoOf('network') }
   }

@@ -217,6 +217,7 @@ export async function runFullPageTranslation(): Promise<void> {
   if (currentRun === run) currentRun = null
   if (canceled) return
 
+  state.lastRunFailed = failed > 0
   state.status = state.entries.size > 0 ? 'translated' : 'idle'
   emit()
 
@@ -234,6 +235,7 @@ export function restorePage(): void {
   state.status = 'idle'
   state.progress = { done: 0, total: 0 }
   state.lastError = null
+  state.lastRunFailed = false
   destroyToast()
   emit()
   toast('已恢复原文', 'success')
@@ -244,6 +246,7 @@ export function toggleTranslatePage(): void {
   if (isTranslating()) {
     if (currentRun) currentRun.canceled = true
     cancelActiveTranslation()
+    state.lastRunFailed = false
     state.status = state.entries.size > 0 ? 'translated' : 'idle'
     emit()
     toast('已取消翻译')
@@ -270,6 +273,9 @@ export interface SelectionTranslateResult {
   translatedText: string
   error: ErrorInfo | null
   modelName: string
+  /** G5 元信息行：耗时（ms）与 token 用量；失败或命中缓存时可能为 0 */
+  latencyMs: number
+  totalTokens: number
 }
 
 /**
@@ -286,7 +292,7 @@ export async function translateSelectionText(
     : activeModel()
   if (!model) {
     const error = errorInfoOf('no-model')
-    return { ok: false, translatedText: '', error, modelName: '' }
+    return { ok: false, translatedText: '', error, modelName: '', latencyMs: 0, totalTokens: 0 }
   }
 
   const sourceLang = sourceLangOverride ?? state.settings.sourceLang
@@ -317,9 +323,23 @@ export async function translateSelectionText(
   emit()
 
   if (result.ok) {
-    return { ok: true, translatedText: result.text, error: null, modelName: model.name }
+    return {
+      ok: true,
+      translatedText: result.text,
+      error: null,
+      modelName: model.name,
+      latencyMs: result.latencyMs,
+      totalTokens: result.totalTokens,
+    }
   }
-  return { ok: false, translatedText: '', error: result.error, modelName: model.name }
+  return {
+    ok: false,
+    translatedText: '',
+    error: result.error,
+    modelName: model.name,
+    latencyMs: 0,
+    totalTokens: 0,
+  }
 }
 
 /**

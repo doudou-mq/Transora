@@ -2,21 +2,22 @@
  * G10 悬浮按钮（FAB）
  *
  * 设计约束：
- *  - X1：**固定不可拖拽**，可隐藏（隐藏后由 Popup / 设置页恢复）；
- *  - 悬停即在左侧展开菜单，点击也可锁定展开；
- *  - 角标三态：默认（无）/ 进行中（已译块数）/ 完成（对勾，短暂显示）；
- *  - D-4：未配置模型时，菜单顶部插入引导卡，「翻译本页」「翻译选中文本」「多模型对比」置灰。
+ *  - 严格贴靠视口右侧（距右 18px），**固定不可拖拽**（X1）；
+ *  - 侧边栏打开期间隐藏（否则会被贴右滑出的侧边栏盖住，看得见点不动）；
+ *  - 按钮字形 = 白色字符「T」；悬停放大并加深投影，同时向左滑出菜单；
+ *  - 悬停 ≥120ms 才展开（防误触），移出 250ms 后收起；Esc 关闭；↑↓ 移动、Enter 执行；
+ *  - 角标三态：进行中（已译块数）/ 完成（对勾）/ 失败（感叹号），复用 H3 规范；
+ *  - 菜单 = 功能导航中枢（S4）：①–③ 留在当前页面，④–⑦ 进新标签页，两组之间发丝线分隔；
+ *  - D-4：未配置模型时，顶部插入引导卡，「翻译当前页面」「多模型对比」置灰。
  */
 
-import { FAB, Z } from '@/shared/constants'
+import { Z } from '@/shared/constants'
 import {
   openApp,
   openSidebar,
   restorePage,
-  setFabHidden,
   toggleFabMenu,
   toggleTranslatePage,
-  translateCurrentSelection,
 } from '../actions'
 import { isUnconfigured, state, type SidebarTab } from '../state'
 import { createGuideCard } from './guide-card'
@@ -24,13 +25,21 @@ import { ICONS } from './icons'
 
 const COMPLETED_BADGE_MS = 3500
 
+/** S4：hover ≥120ms 才展开，移出 250ms 后收起 */
+const HOVER_OPEN_DELAY_MS = 120
+const HOVER_CLOSE_DELAY_MS = 250
+
+/** 键盘导航高亮：用 class 而非 DOM focus，避免 render 重建时焦点丢失 */
+const ACTIVE_CLASS = 'is-active'
+
 let completedAt = 0
+let completedFailed = false
 let completedTimer: number | null = null
 
 export interface FabController {
   render: () => void
-  /** 翻译完成时调用：短暂显示完成角标 */
-  markCompleted: () => void
+  /** 翻译结束时调用：短暂显示完成 / 失败角标 */
+  markCompleted: (failed?: boolean) => void
 }
 
 interface MenuItem {
@@ -40,8 +49,11 @@ interface MenuItem {
   disabled?: boolean
   hint?: string
   onClick: () => void
+  /** true = 本项之后插入分组发丝线 */
+  sepAfter?: boolean
 }
 
+/** S4 菜单 ①–⑦：与设计稿逐项对齐 */
 function buildMenuItems(): MenuItem[] {
   const unconfigured = isUnconfigured()
   const translating = state.status === 'translating'
@@ -50,37 +62,21 @@ function buildMenuItems(): MenuItem[] {
   return [
     {
       key: 'translate',
-      label: translating ? '取消翻译' : translated ? '恢复原文' : '翻译本页',
+      label: translating ? '取消翻译' : translated ? '恢复原文' : '翻译当前页面',
       icon: translated ? ICONS.restore : ICONS.translate,
-      disabled: unconfigured && !translating,
-      hint: unconfigured ? '需先配置模型' : 'Alt+Shift+S',
+      disabled: unconfigured,
+      hint: 'Alt+Shift+S',
       onClick: () => {
-        if (translated) restorePage()
+        if (translated && !translating) restorePage()
         else toggleTranslatePage()
       },
     },
     {
-      key: 'selection',
-      label: '翻译选中文本',
-      icon: ICONS.page,
-      disabled: unconfigured,
-      hint: unconfigured ? '需先配置模型' : 'Alt+Shift+T',
-      onClick: () => {
-        void translateCurrentSelection()
-      },
-    },
-    {
-      key: 'page',
-      label: '本页对照',
+      key: 'sidebar',
+      label: '打开侧边栏',
       icon: ICONS.sidebar,
       hint: 'Alt+Shift+R',
       onClick: () => openSidebar('page' satisfies SidebarTab),
-    },
-    {
-      key: 'records',
-      label: '划词记录',
-      icon: ICONS.history,
-      onClick: () => openSidebar('records' satisfies SidebarTab),
     },
     {
       key: 'compare',
@@ -88,26 +84,37 @@ function buildMenuItems(): MenuItem[] {
       icon: ICONS.compare,
       disabled: true,
       hint: '阶段 2 开放',
+      sepAfter: true,
       onClick: () => openSidebar('compare' satisfies SidebarTab),
     },
     {
-      key: 'settings',
+      key: 'history',
+      label: '翻译历史',
+      icon: ICONS.history,
+      onClick: () => openApp('history'),
+    },
+    {
+      key: 'models',
       label: '模型配置',
-      icon: ICONS.settings,
+      icon: ICONS.sliders,
       onClick: () => openApp('models'),
     },
     {
-      key: 'hide',
-      label: '隐藏悬浮按钮',
-      icon: ICONS.eyeOff,
-      hint: '可在设置页恢复',
-      onClick: () => {
-        void setFabHidden(true)
-      },
+      key: 'general',
+      label: '通用设置',
+      icon: ICONS.settings,
+      onClick: () => openApp('general'),
+    },
+    {
+      key: 'about',
+      label: '关于 Transora',
+      icon: ICONS.info,
+      onClick: () => openApp('about'),
     },
   ]
 }
 
+/** H3 三态角标 */
 function buildBadge(): HTMLElement | null {
   if (state.status === 'translating') {
     const badge = document.createElement('span')
@@ -119,9 +126,11 @@ function buildBadge(): HTMLElement | null {
 
   if (completedAt > 0 && Date.now() - completedAt < COMPLETED_BADGE_MS) {
     const badge = document.createElement('span')
-    badge.className = 'transora-fab-badge transora-fab-badge--done'
-    badge.innerHTML = ICONS.check
-    badge.title = '翻译完成'
+    badge.className = `transora-fab-badge ${
+      completedFailed ? 'transora-fab-badge--error' : 'transora-fab-badge--done'
+    }`
+    badge.innerHTML = completedFailed ? '!' : ICONS.check
+    badge.title = completedFailed ? '部分段落翻译失败' : '翻译完成'
     return badge
   }
 
@@ -134,13 +143,32 @@ export function mountFab(root: HTMLElement): FabController {
   container.setAttribute('data-transora', 'fab')
   container.style.zIndex = String(Z.fab)
 
-  // 悬停开合：移出后延迟判定，避免鼠标经过时闪断
-  container.addEventListener('mouseenter', () => toggleFabMenu(true))
+  let openTimer: number | null = null
+  let closeTimer: number | null = null
+
+  container.addEventListener('mouseenter', () => {
+    if (closeTimer !== null) {
+      window.clearTimeout(closeTimer)
+      closeTimer = null
+    }
+    if (state.fabMenuOpen || openTimer !== null) return
+    openTimer = window.setTimeout(() => {
+      openTimer = null
+      toggleFabMenu(true)
+    }, HOVER_OPEN_DELAY_MS)
+  })
+
   container.addEventListener('mouseleave', () => {
-    window.setTimeout(() => {
+    if (openTimer !== null) {
+      window.clearTimeout(openTimer)
+      openTimer = null
+    }
+    if (closeTimer !== null) window.clearTimeout(closeTimer)
+    closeTimer = window.setTimeout(() => {
+      closeTimer = null
       if (container.matches(':hover')) return
       toggleFabMenu(false)
-    }, 220)
+    }, HOVER_CLOSE_DELAY_MS)
   })
 
   root.appendChild(container)
@@ -155,17 +183,14 @@ export function mountFab(root: HTMLElement): FabController {
     button.type = 'button'
     button.className = 'transora-fab-btn'
     button.title = translating ? '取消翻译' : 'Transora'
-    button.innerHTML = translating ? ICONS.close : ICONS.translate
+    // 字形固定为字符「T」：状态差异只由角标表达（G10 / H3）
+    button.textContent = 'T'
     button.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
-      // 悬停已经会展开菜单，所以点击不能再简单 toggle —— 否则鼠标一移上来菜单就被点没了。
-      // 语义定为：菜单开着 → 收起（不做任何翻译，避免误触）；菜单没开 → 直接执行主操作。
-      if (state.fabMenuOpen) {
-        toggleFabMenu(false)
-        return
-      }
+      // Q4：hover 已会展开菜单，点击始终执行主操作，不再用「菜单开着则收起」的语义
       toggleTranslatePage()
+      if (state.fabMenuOpen) toggleFabMenu(false)
     })
 
     const badge = buildBadge()
@@ -173,7 +198,17 @@ export function mountFab(root: HTMLElement): FabController {
 
     const menu = document.createElement('div')
     menu.className = 'transora-fab-menu'
-    menu.style.width = `${FAB.menuWidth - 24}px`
+
+    const head = document.createElement('div')
+    head.className = 'transora-fab-menu-head'
+    const mark = document.createElement('span')
+    mark.className = 'transora-fab-menu-mark'
+    mark.textContent = 'T'
+    const title = document.createElement('span')
+    title.className = 'transora-fab-menu-title'
+    title.textContent = 'Transora'
+    head.append(mark, title)
+    menu.appendChild(head)
 
     if (isUnconfigured()) {
       menu.appendChild(
@@ -218,10 +253,16 @@ export function mountFab(root: HTMLElement): FabController {
         event.stopPropagation()
         if (item.disabled) return
         item.onClick()
-        if (item.key !== 'hide') toggleFabMenu(false)
+        toggleFabMenu(false)
       })
 
       list.appendChild(row)
+
+      if (item.sepAfter) {
+        const sep = document.createElement('div')
+        sep.className = 'transora-fab-sep'
+        list.appendChild(sep)
+      }
     }
 
     menu.appendChild(list)
@@ -229,15 +270,57 @@ export function mountFab(root: HTMLElement): FabController {
     container.replaceChildren(menu, button)
   }
 
+  /** Esc 关闭 / ↑↓ 移动 / Enter 执行（S4 键盘操作） */
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (!state.fabMenuOpen) return
+
+    if (event.key === 'Escape') {
+      event.stopPropagation()
+      toggleFabMenu(false)
+      return
+    }
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const items = [
+        ...container.querySelectorAll<HTMLButtonElement>('.transora-fab-item:not(:disabled)'),
+      ]
+      if (items.length === 0) return
+      event.preventDefault()
+      const current = items.findIndex((el) => el.classList.contains(ACTIVE_CLASS))
+      const step = event.key === 'ArrowDown' ? 1 : -1
+      const next =
+        current < 0
+          ? step > 0
+            ? 0
+            : items.length - 1
+          : (current + step + items.length) % items.length
+      items.forEach((el, index) => el.classList.toggle(ACTIVE_CLASS, index === next))
+      return
+    }
+
+    if (event.key === 'Enter') {
+      const active = container.querySelector<HTMLButtonElement>(
+        `.transora-fab-item.${ACTIVE_CLASS}`,
+      )
+      if (!active) return
+      event.preventDefault()
+      active.click()
+    }
+  }
+
+  document.addEventListener('keydown', onKeyDown, true)
+
   render()
 
   return {
     render,
-    markCompleted(): void {
+    markCompleted(failed = false): void {
       completedAt = Date.now()
+      completedFailed = failed
       if (completedTimer !== null) window.clearTimeout(completedTimer)
       completedTimer = window.setTimeout(() => {
         completedAt = 0
+        completedFailed = false
         completedTimer = null
         render()
       }, COMPLETED_BADGE_MS)

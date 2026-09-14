@@ -91,12 +91,34 @@ export const STORAGE_KEYS = {
 /** 悬浮按钮尺寸（设计稿 G10） */
 export const FAB = {
   size: 40,
-  offset: 16,
+  offset: 18,
   menuWidth: 224,
 } as const
 
 /** 侧边栏宽度（设计稿 G11） */
 export const SIDEBAR_WIDTH = 400
+
+/**
+ * 划词跟随图标（G4）与划词内容块（G5）的几何 / 节奏。
+ * 取值口径 = 设计稿交互规范 S5（docs/00 §A1、§D-4 已冻结），不是 G4/G5 视觉稿的像素。
+ */
+export const SELECTION = {
+  /** 跟随图标 24×24、圆角 8px，橙底 + 白色「译」字（S5） */
+  iconSize: 24,
+  iconRadius: 8,
+  /** 图标落在选区末端外扩 8px 处（S5 位置） */
+  offset: 8,
+  /** 选中长度 ≥ 2（按码点计，CJK 也按 1 个字算）才出现图标（S5 触发条件） */
+  minChars: 2,
+  /** 悬停图标 ≥120ms 展开内容块；移出 250ms 收起（与 S4 菜单同一节奏） */
+  hoverOpenDelayMs: 120,
+  hoverCloseDelayMs: 250,
+  /**
+   * 内容块宽度：S5 规格文本写 340px，G5 视觉稿画 470px —— 设计稿自相矛盾。
+   * 用户裁决 Q5-C：保持实现现状 360px（两侧都能读，不重排）。
+   */
+  cardWidth: 360,
+} as const
 
 /** MutationObserver 防抖（docs/00 §G-3 风险 4） */
 export const MUTATION_DEBOUNCE_MS = 300

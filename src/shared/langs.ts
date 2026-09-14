@@ -45,6 +45,25 @@ export function langDisplayName(value: string): string {
   return hit ? hit.label : value
 }
 
+/**
+ * ISO 值 → 语言对里的单字缩写（G5 元信息行「英 → 中」）。
+ *
+ * 中文两个变体单独指定「中 / 繁」（设计稿的通用写法是「中」，但繁体必须能区分出来）；
+ * 其余语言取显示名首字 —— 英语→英、日语→日、西班牙语→西。
+ */
+const SHORT_NAMES: Record<string, string> = {
+  auto: '自动',
+  'zh-CN': '中',
+  'zh-TW': '繁',
+}
+
+export function langShortName(value: string): string {
+  const explicit = SHORT_NAMES[value]
+  if (explicit) return explicit
+  const label = langDisplayName(value)
+  return /[\u4e00-\u9fa5]/.test(label) ? label[0] : label
+}
+
 /** 源语言是否为「具体语言」（决定 prompt 是否明写源语言） */
 export function isExplicitSource(value: string): boolean {
   return value !== 'auto' && value !== ''

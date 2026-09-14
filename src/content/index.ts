@@ -50,8 +50,8 @@ async function boot(): Promise<void> {
     selection.render()
 
     // 翻译完成 → 悬浮按钮短暂显示完成角标
-    if (previousStatus === 'translating' && state.status === 'translated') {
-      fab.markCompleted()
+    if (previousStatus === 'translating' && state.status !== 'translating') {
+      fab.markCompleted(state.lastRunFailed)
     }
     previousStatus = state.status
   })

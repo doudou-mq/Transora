@@ -49,6 +49,8 @@ export interface PageState {
   progress: { done: number; total: number }
   selectionRecords: SelectionRecord[]
   lastError: ErrorInfo | null
+  /** 上一轮整页翻译是否存在失败块（H3 失败角标判据） */
+  lastRunFailed: boolean
   /** 侧边栏当前 Tab 与开关（X2：默认不打开） */
   sidebarOpen: boolean
   sidebarTab: SidebarTab
@@ -73,6 +75,7 @@ export const state: PageState = {
   progress: { done: 0, total: 0 },
   selectionRecords: [],
   lastError: null,
+  lastRunFailed: false,
   sidebarOpen: false,
   sidebarTab: 'page',
   fabMenuOpen: false,
