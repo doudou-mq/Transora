@@ -6,6 +6,7 @@
  */
 
 import { MSG, sendToBackground, type TestConnectionResponse } from '@/shared/messages'
+import { TARGET_LANGS } from '@/shared/langs'
 import type { ModelConfig } from '@/shared/types'
 import { uid } from '@/shared/utils'
 import { el, getContext, saveModels } from '../store'
@@ -18,6 +19,8 @@ function emptyModel(): ModelConfig {
     endpoint: '',
     apiKey: '',
     model: '',
+    // 留空 = 跟随「通用设置 · 默认目标语言」
+    targetLang: '',
     temperature: 0.3,
     maxTokens: 0,
     enabled: true,
@@ -70,6 +73,24 @@ function numberInput(
   return input
 }
 
+/** 下拉输入（B9 第 5 字段「目标语言」） */
+function selectInput(
+  options: Array<{ value: string; label: string }>,
+  value: string,
+  onChange: (value: string) => void,
+): HTMLElement {
+  const select = el('select', 'tr-select')
+  for (const option of options) {
+    const opt = document.createElement('option')
+    opt.value = option.value
+    opt.textContent = option.label
+    if (option.value === value) opt.selected = true
+    select.appendChild(opt)
+  }
+  select.addEventListener('change', () => onChange(select.value))
+  return select
+}
+
 /**
  * 编辑态放在模块作用域而不是 renderModels 的闭包里：
  * 页面因存储变更（其它标签页 / Popup 改动设置）而整体重绘时，未保存的草稿不会丢。
@@ -94,6 +115,7 @@ export function renderModels(): HTMLElement {
 
   function buildEditor(): HTMLElement {
     const model = draft as ModelConfig
+    const { settings } = getContext()
     const card = el('div', 'tr-card editor')
     card.appendChild(el('div', 'editor-title', isNew ? '新增模型' : '编辑模型'))
 
@@ -152,6 +174,24 @@ export function renderModels(): HTMLElement {
       ),
     )
 
+    // B9 / E2 第 5 个字段：目标语言。留空 = 跟随通用设置里的「默认目标语言」
+    grid.appendChild(
+      field(
+        '目标语言',
+        selectInput(
+          [
+            { value: '', label: `跟随全局设置（${settings.targetLang}）` },
+            ...TARGET_LANGS.map((l) => ({ value: l.value, label: l.label })),
+          ],
+          model.targetLang ?? '',
+          (value) => {
+            model.targetLang = value
+          },
+        ),
+        '留空即跟随通用设置；单独指定后，用这套模型翻译时固定输出到该语言。',
+      ),
+    )
+
     const numbers = el('div', 'editor-numbers')
     numbers.appendChild(
       field(
@@ -177,7 +217,7 @@ export function renderModels(): HTMLElement {
 
     const actions = el('div', 'editor-actions')
 
-    const save = el('button', 'tr-btn tr-btn--primary', '保存')
+    const save = el('button', 'tr-btn tr-btn--primary', '保存配置')
     save.type = 'button'
     save.addEventListener('click', () => {
       const error = validate(model)
@@ -191,7 +231,7 @@ export function renderModels(): HTMLElement {
         : getContext().models.map((m) => (m.id === model.id ? model : m))
       void saveModels(next).then(() => {
         draft = null
-        status = { kind: 'ok', text: isNew ? '已新增模型' : '已保存' }
+        status = { kind: 'ok', text: isNew ? '已新增模型' : '已保存到本机' }
         redraw()
       })
     })
@@ -213,8 +253,13 @@ export function renderModels(): HTMLElement {
       void sendToBackground<TestConnectionResponse>({ type: MSG.TEST_CONNECTION, model }).then(
         (result) => {
           testing = false
+          // B11：设计稿口径「连接成功 ｜ deepseek-chat 响应正常，耗时 812 ms ｜ 已保存到本机」
+          const modelName = model.model || '模型'
           status = result.ok
-            ? { kind: 'ok', text: `连接成功 · ${result.latencyMs}ms · 返回「${result.sample ?? ''}」` }
+            ? {
+                kind: 'ok',
+                text: `连接成功 ｜ ${modelName} 响应正常，耗时 ${result.latencyMs} ms ｜ 已保存到本机`,
+              }
             : { kind: 'error', text: result.error?.message ?? '连接失败' }
           redraw()
         },

@@ -10,15 +10,52 @@
 
 import './styles.css'
 
-import { MSG, isTransoraMessage, type ContentCommand } from '@/shared/messages'
+import { BATCH } from '@/shared/constants'
+import {
+  MSG,
+  isTransoraMessage,
+  type ContentCommand,
+  type ContentCommandPayload,
+  type PagePlan,
+} from '@/shared/messages'
 import { applyDisplayMode } from './injector'
 import { dispatchCommand } from './actions'
+import { collectBlocks } from './extractor'
 import { mountSelection } from './selection'
 import { emit, hydrateState, state, subscribe, watchStorage, type PageStatus } from './state'
 import { mountFab } from './ui/fab'
 import { mountSidebar } from './ui/sidebar'
+import { mountStatusBar } from './ui/statusbar'
 
 const INIT_FLAG = '__transoraInitialized'
+
+/** 已注入但失败的块数（D6「部分失败」判据） */
+function failedCount(): number {
+  let count = 0
+  state.entries.forEach((entry) => {
+    if (entry.error) count += 1
+  })
+  return count
+}
+
+/**
+ * D3「翻译前确认」的输入：待翻译块数 / 总字数 / 批次数。
+ * 只统计**还没翻过的块**（已注入的不重复计费），切分口径与 docs/00 §D-2 一致。
+ */
+function buildPlan(): PagePlan {
+  const skip = new WeakSet<HTMLElement>()
+  state.entries.forEach((_entry, el) => skip.add(el))
+
+  const blocks = collectBlocks(document, { skip })
+  const chars = blocks.reduce((sum, block) => sum + block.text.length, 0)
+  const batches = Math.max(
+    1,
+    Math.ceil(blocks.length / BATCH.MAX_BLOCKS),
+    Math.ceil(chars / BATCH.MAX_CHARS),
+  )
+
+  return { blocks: blocks.length, chars, batches }
+}
 
 async function boot(): Promise<void> {
   const globalScope = window as unknown as Record<string, unknown>
@@ -33,6 +70,7 @@ async function boot(): Promise<void> {
 
   const fab = mountFab(root)
   const sidebar = mountSidebar(root)
+  const statusBar = mountStatusBar(root)
   const selection = mountSelection(root)
 
   await hydrateState()
@@ -47,6 +85,7 @@ async function boot(): Promise<void> {
 
     fab.render()
     sidebar.render()
+    statusBar.render()
     selection.render()
 
     // 翻译完成 → 悬浮按钮短暂显示完成角标
@@ -61,7 +100,8 @@ async function boot(): Promise<void> {
     if (!isTransoraMessage(message)) return undefined
 
     if (message.type === MSG.CMD) {
-      dispatchCommand((message as unknown as { command: ContentCommand }).command)
+      const cmd = message as unknown as { command: ContentCommand; payload?: ContentCommandPayload }
+      dispatchCommand(cmd.command, cmd.payload)
       sendResponse({ ok: true })
       return undefined
     }
@@ -72,6 +112,9 @@ async function boot(): Promise<void> {
         status: state.status,
         progress: state.progress,
         entryCount: state.entries.size,
+        failedCount: failedCount(),
+        cancellable: state.status === 'translating',
+        plan: state.status === 'translating' ? undefined : buildPlan(),
       })
       return undefined
     }

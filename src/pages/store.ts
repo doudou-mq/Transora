@@ -27,6 +27,7 @@ let current: AppContext = {
     sourceLang: 'en',
     displayMode: 'bilingual',
     cacheEnabled: true,
+    autoRetry: true,
     historyLimit: 1000,
     maxModelsForCompare: 3,
     lastModelId: null,
@@ -52,6 +53,12 @@ export async function saveModels(models: ModelConfig[]): Promise<void> {
 
 export async function patchSettings(patch: Partial<Settings>): Promise<void> {
   const next = await sendToBackground<Settings>({ type: MSG.PATCH_SETTINGS, patch })
+  current = { ...current, settings: next }
+}
+
+/** E5 页首「恢复默认」：整体写回出厂设置（不含模型与缓存） */
+export async function resetSettings(): Promise<void> {
+  const next = await sendToBackground<Settings>({ type: MSG.RESET_SETTINGS })
   current = { ...current, settings: next }
 }
 

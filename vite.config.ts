@@ -16,6 +16,14 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  /**
+   * F6 关于页要显示真实的「构建日期」。
+   * 写成常量会立刻过期，写成运行时 `new Date()` 会变成「打开页面的日期」——
+   * 都不可信。这里在构建时烧进去，一次构建一个日期，口径才成立。
+   */
+  define: {
+    __TRANSORA_BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
+  },
   plugins: [crx({ manifest })],
   build: {
     target: 'chrome111',

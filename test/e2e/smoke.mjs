@@ -209,6 +209,26 @@ try {
     { timeout: 25000 },
   )
 
+  /* ---------- A2 / H3 工具栏角标三态 ---------- */
+  // 完成角标只停留 3.5s，而且「译文块不再 loading」会早于本轮收尾代码，
+  // 所以这里轮询等 ✓ 出现，而不是立刻断言（否则会读到进行中的进度角标）。
+  const badgeDone = await (async () => {
+    for (let i = 0; i < 40; i += 1) {
+      const snapshot = await app.evaluate(async () => ({
+        text: await chrome.action.getBadgeText({}),
+        title: await chrome.action.getTitle({}),
+      }))
+      if (snapshot.text === '✓') return snapshot
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    return { text: null, title: null }
+  })()
+  check(
+    'H3 工具栏角标：完成态显示 ✓（A2）',
+    badgeDone.text === '✓',
+    JSON.stringify(badgeDone),
+  )
+
   const stats = await page.evaluate(() => {
     const translations = [...document.querySelectorAll('.transora-tr')]
     return {
@@ -259,6 +279,144 @@ try {
 
   await setMode('transora-mode-bilingual')
 
+  /* ---------- G7 页面顶部状态栏（Sticky） ---------- */
+  await page.waitForSelector('.transora-st .transora-st-inner', { timeout: 8000 })
+  const st = await page.evaluate(() => {
+    const bar = document.querySelector('.transora-st')
+    const modes = [...document.querySelectorAll('.transora-st-mode')]
+    const fill = document.querySelector('.transora-st-bar-fill')
+    const cs = getComputedStyle(bar)
+    const rect = bar.getBoundingClientRect()
+    return {
+      position: cs.position,
+      top: Math.round(rect.top),
+      left: Math.round(rect.left),
+      mark: document.querySelector('.transora-st-mark')?.textContent,
+      title: document.querySelector('.transora-st-title')?.textContent,
+      host: document.querySelector('.transora-st-host')?.textContent,
+      count: document.querySelector('.transora-st-count')?.textContent,
+      barH: Math.round(document.querySelector('.transora-st-bar').getBoundingClientRect().height),
+      fillRatio: fill ? Math.round((fill.getBoundingClientRect().width / fill.parentElement.getBoundingClientRect().width) * 100) : null,
+      modes: modes.map((n) => n.textContent.trim()),
+      activeMode: modes.find((n) => n.classList.contains('is-active'))?.textContent?.trim(),
+      langOptions: document.querySelectorAll('.transora-st-lang option').length,
+      exit: Boolean(document.querySelector('.transora-st-exit svg')),
+      radius: getComputedStyle(document.querySelector('.transora-st-inner')).borderRadius,
+    }
+  })
+  check(
+    'G7 顶栏吸顶且左侧为「译」章 + 对照状态 + 域名',
+    st.position === 'fixed' && st.mark === '译' && st.title === '双语对照已开启' && st.host.startsWith('127.0.0.1'),
+    JSON.stringify({ position: st.position, mark: st.mark, title: st.title, host: st.host }),
+  )
+  check(
+    'G7 顶栏右侧 = 段数 + 4px 进度条 + 三态 + 目标语言 + 退出',
+    /^\d+ \/ \d+ 段$/.test(st.count) &&
+      st.barH === 4 &&
+      st.modes.join(',') === '原文,译文,对照' &&
+      st.activeMode === '对照' &&
+      st.langOptions === 9 &&
+      st.exit,
+    JSON.stringify({ count: st.count, barH: st.barH, modes: st.modes, lang: st.langOptions, exit: st.exit }),
+  )
+  check('G7 顶栏为 56 高圆角卡片（圆角 10）', st.radius === '10px', st.radius)
+
+  /* ---------- H1 快捷键 Alt+Shift+M：切换 对照 / 译文 / 原文 ---------- */
+  // 真按浏览器快捷键在 Playwright 里做不到，改为走「Background → Content」的同一条指令通道，
+  // 这样验证的是真实的命令往返，而不是绕过消息层直接改 DOM。
+  const fixtureTabId = await app.evaluate(async (base) => {
+    const tabs = await chrome.tabs.query({})
+    return tabs.find((t) => (t.url ?? '').startsWith(base))?.id ?? null
+  }, server.baseUrl)
+  check('H1 指令通道可用（能定位 fixture 标签页）', fixtureTabId !== null, String(fixtureTabId))
+
+  const sendCmd = (command) =>
+    app.evaluate(
+      ([tabId, cmd]) => chrome.tabs.sendMessage(tabId, { type: 'transora/cmd', command: cmd }),
+      [fixtureTabId, command],
+    )
+
+  const activeMode = () =>
+    page.evaluate(() =>
+      document.querySelector('.transora-st-mode.is-active')?.textContent?.trim(),
+    )
+
+  await sendCmd('toggle-display-mode')
+  await page.waitForFunction(
+    () => document.querySelector('.transora-st-mode.is-active')?.textContent?.trim() === '译文',
+    { timeout: 5000 },
+  )
+  check('Alt+Shift+M 对照 → 译文', (await activeMode()) === '译文')
+  check(
+    '切到「译文」后原文块被隐藏（FR-16）',
+    (await page.evaluate(() => {
+      const node = document.querySelector('.transora-src')
+      return node ? getComputedStyle(node).display === 'none' : null
+    })) === true,
+  )
+
+  await sendCmd('toggle-display-mode')
+  await page.waitForFunction(
+    () => document.querySelector('.transora-st-mode.is-active')?.textContent?.trim() === '原文',
+    { timeout: 5000 },
+  )
+  check('Alt+Shift+M 译文 → 原文', (await activeMode()) === '原文')
+
+  await sendCmd('toggle-display-mode')
+  await page.waitForFunction(
+    () => document.querySelector('.transora-st-mode.is-active')?.textContent?.trim() === '对照',
+    { timeout: 5000 },
+  )
+  check('Alt+Shift+M 原文 → 对照（闭环）', (await activeMode()) === '对照')
+
+  check(
+    'manifest 声明 Alt+Shift+M（H1 / A9）',
+    (await app.evaluate(
+      () => chrome.runtime.getManifest().commands?.['toggle-display-mode']?.suggested_key?.default,
+    )) === 'Alt+Shift+M',
+  )
+
+  const menuTitles = await app.evaluate(
+    () =>
+      Object.values(chrome.runtime.getManifest().commands ?? {})
+        .map((c) => c.description)
+        .join(','),
+  )
+  check(
+    'manifest 四条快捷键齐备（S / T / R / M）',
+    ['翻译本页 / 恢复原文', '翻译选中文本', '打开 / 关闭侧边栏', '切换 对照 / 译文 / 原文'].every((d) =>
+      menuTitles.includes(d),
+    ),
+    menuTitles,
+  )
+
+  /* ---------- H1 右键菜单 4 项 ---------- */
+  // chrome.contextMenus 没有「列出已注册项」的 API，改用重复 id 必然报错这一行为反证注册成功。
+  const menuProbe = await worker.evaluate(async () => {
+    const ids = [
+      'transora:translate-selection',
+      'transora:toggle-page',
+      'transora:copy-source',
+      'transora:copy-translation',
+    ]
+    const dup = await Promise.all(
+      ids.map(
+        (id) =>
+          new Promise((resolve) => {
+            chrome.contextMenus.create({ id, title: 'dup', contexts: ['selection'] }, () => {
+              resolve(chrome.runtime.lastError?.message ?? null)
+            })
+          }),
+      ),
+    )
+    return dup
+  })
+  check(
+    'H1 右键菜单 4 项均已注册（重复 id 反证）',
+    menuProbe.every((msg) => typeof msg === 'string' && msg.length > 0),
+    JSON.stringify(menuProbe),
+  )
+
   /* ---------- 侧边栏 ---------- */
   await page.hover('[data-transora="fab"]')
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
@@ -267,8 +425,33 @@ try {
     .first()
     .click()
   await page.waitForSelector('.transora-sidebar.transora-sidebar--open', { timeout: 5000 })
-  const entries = await page.locator('.transora-sb-entry').count()
+  // G11：本页对照以「大纲」形式呈现，每条 = 一个已出块（含层级缩进 + 状态标签）
+  const entries = await page.locator('.transora-sb-out-item').count()
   check('侧边栏 Slide 打开并列出本页对照', entries > 0, `entries=${entries}`)
+  check(
+    '侧边栏 G11 结构齐备（T 章标 / Tab 标签 / 翻译进度 / 三态切换）',
+    await page.evaluate(() => {
+      const q = (s) => document.querySelector(s)
+      return {
+        mark: q('.transora-sb-mark')?.textContent === 'T',
+        tabs: document.querySelectorAll('.transora-sb-tab').length === 3,
+        tabLabels:
+          [...document.querySelectorAll('.transora-sb-tab')]
+            .map((n) => n.childNodes[0]?.textContent?.trim())
+            .join(',') === '本页对照,划词记录,多模型对比',
+        progress: Boolean(q('.transora-sb-progress-count')),
+        modes: document.querySelectorAll('.transora-sb-mode').length === 3,
+      }
+    }).then((r) => Object.values(r).every(Boolean)),
+  )
+  check(
+    '侧边栏三态切换用设计稿名词「原文 / 译文 / 对照」（G3 / G11）',
+    await page.evaluate(() =>
+      [...document.querySelectorAll('.transora-sb-mode')]
+        .map((n) => n.textContent.trim())
+        .join(','),
+    ).then((s) => s === '原文,译文,对照'),
+  )
   check(
     '侧边栏打开时悬浮按钮隐藏（Q3-B：严格贴右，不让位）',
     await page.evaluate(
@@ -451,23 +634,102 @@ try {
   await settle(page)
   await page.screenshot({ path: path.join(OUT, '08-restored.png') })
 
+  /* ---------- A2 / H3：退出对照后角标清空 ---------- */
+  const badgeCleared = await (async () => {
+    for (let i = 0; i < 20; i += 1) {
+      const text = await app.evaluate(() => chrome.action.getBadgeText({}))
+      if (text === '') return true
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    return false
+  })()
+  check('H3 工具栏角标：退出对照后清空（A2）', badgeCleared)
+
   /* ---------- Popup ---------- */
   const popup = await context.newPage()
   await popup.goto(`chrome-extension://${extensionId}/src/popup/index.html`, { waitUntil: 'load' })
-  await popup.waitForSelector('.popup-card', { timeout: 8000 })
+  await popup.waitForSelector('.popup-header', { timeout: 8000 })
   // 这里是当普通标签页打开的，所以只量由 CSS 钉死的 #app（它决定真实 popup 窗口尺寸）
   const popupSize = await popup.evaluate(() => {
     const rect = document.getElementById('app').getBoundingClientRect()
     return { w: Math.round(rect.width), h: Math.round(rect.height) }
   })
   check('Popup 尺寸 400×600', popupSize.w === 400 && popupSize.h === 600, JSON.stringify(popupSize))
-  check('Popup 渲染模型快选与目标语言', (await popup.locator('.popup-row').count()) === 2)
+  // D2 就绪态：模型单选列表 + 目标语言下拉
+  // 注意：popup 以普通标签页打开时，getActiveTab() 命中的是 popup 自己，
+  // 拿不到 fixture 页的内容脚本 → pageStatus.available=false → 主按钮应降级为「当前页面不支持翻译」。
+  const popupShape = await popup.evaluate(() => ({
+    models: document.querySelectorAll('.popup-model-row').length,
+    select: document.querySelectorAll('.popup-input-select').length,
+    selected: document.querySelectorAll('.popup-model-row.is-selected').length,
+    primary: document.querySelector('.popup-footer .popup-btn--primary')?.textContent?.trim(),
+    primaryDisabled: document.querySelector('.popup-footer .popup-btn--primary')?.disabled === true,
+  }))
+  check(
+    'Popup 渲染模型单选列表与目标语言（D2）',
+    popupShape.models === 1 && popupShape.select === 1 && popupShape.selected === 1,
+    JSON.stringify(popupShape),
+  )
+  check(
+    'Popup 主按钮在无内容脚本页降级（D2 边界）',
+    popupShape.primary === '当前页面不支持翻译' && popupShape.primaryDisabled,
+    popupShape.primary,
+  )
   await popup.screenshot({ path: path.join(OUT, '09-popup.png') })
 
   /* ---------- 其余区块 ---------- */
   await app.goto(`chrome-extension://${extensionId}/src/pages/index.html#general`, { waitUntil: 'load' })
   await app.waitForSelector('.setting-row', { timeout: 8000 })
   check('通用设置页渲染', (await app.locator('.setting-row').count()) >= 6)
+  const general = await app.evaluate(() => {
+    const rows = [...document.querySelectorAll('.setting-row')]
+    const rowOf = (label) =>
+      rows.find((r) => r.querySelector('.setting-label')?.textContent?.trim() === label)
+    return {
+      labels: rows.map((r) => r.querySelector('.setting-label')?.textContent?.trim()),
+      hasResetAction: Boolean(
+        [...document.querySelectorAll('.tr-btn')].find(
+          (b) => b.textContent?.trim() === '恢复默认',
+        ),
+      ),
+      autoRetry: Boolean(rowOf('失败自动重试')?.querySelector('.switch-input')),
+      displayModeIsSelect: Boolean(rowOf('默认显示模式')?.querySelector('select')),
+      compareIsSelect: Boolean(rowOf('全文对比模型上限')?.querySelector('select')),
+      historyIsSelect: Boolean(rowOf('历史保留上限')?.querySelector('select')),
+      compareOptions: [...(rowOf('全文对比模型上限')?.querySelectorAll('option') ?? [])].map(
+        (o) => o.textContent?.trim(),
+      ),
+      historyOptions: [...(rowOf('历史保留上限')?.querySelectorAll('option') ?? [])].map((o) =>
+        o.textContent?.trim(),
+      ),
+    }
+  })
+  check(
+    'E5 通用设置页首含「恢复默认」（A5）',
+    general.hasResetAction,
+    JSON.stringify(general.labels),
+  )
+  check(
+    'E5 通用设置含「失败自动重试」开关（A5）',
+    general.autoRetry && general.labels.includes('失败自动重试'),
+    JSON.stringify(general.labels),
+  )
+  check(
+    'E5 默认显示模式改为下拉（B7）',
+    general.displayModeIsSelect,
+    String(general.displayModeIsSelect),
+  )
+  check(
+    'E5 对比上限 / 历史上限改为可调下拉（B8）',
+    general.compareIsSelect &&
+      general.historyIsSelect &&
+      general.compareOptions.join(',') === '1 个,2 个,3 个' &&
+      general.historyOptions.join(',') === '100 条,500 条,1000 条,5000 条',
+    JSON.stringify({
+      compare: general.compareOptions,
+      history: general.historyOptions,
+    }),
+  )
   await app.screenshot({ path: path.join(OUT, '10-app-general.png'), fullPage: true })
 
   await app.goto(`chrome-extension://${extensionId}/src/pages/index.html#about`, { waitUntil: 'load' })
@@ -477,7 +739,109 @@ try {
     '关于页含权限说明且不含 sidePanel（C2）',
     aboutText.includes('storage') && !aboutText.includes('sidePanel'),
   )
+  const about = await app.evaluate(() => ({
+    versionPill: [...document.querySelectorAll('.tr-pill')]
+      .map((p) => p.textContent?.trim())
+      .join('|'),
+    buildDate: [...document.querySelectorAll('.about-row')]
+      .filter((r) => r.querySelector('.about-row-name')?.textContent?.includes('构建日期'))
+      .map((r) => r.querySelector('.about-row-value')?.textContent?.trim())[0],
+    hasChangelog: Boolean(
+      [...document.querySelectorAll('.settings-group-title')].find(
+        (t) => t.textContent?.trim() === '更新说明',
+      ),
+    ),
+    hasLicenseCard: Boolean(
+      [...document.querySelectorAll('.settings-group-title')].find(
+        (t) => t.textContent?.trim() === '开源许可与反馈',
+      ),
+    ),
+    licenseButtons: [...document.querySelectorAll('.about-license-actions .tr-btn')].map((b) =>
+      b.textContent?.trim(),
+    ),
+    licenseText: document.querySelector('.about-license .about-footnote')?.textContent ?? '',
+    shortcutKeys: [...document.querySelectorAll('.about-row-value')]
+      .map((v) => v.textContent?.trim())
+      .filter((t) => (t ?? '').includes('Alt + Shift')),
+  }))
+  check(
+    'F6 关于页含「已是最新版本」与产品版本口径（A6）',
+    about.versionPill.includes('已是最新版本') && about.versionPill.includes('产品版本 v0.1.0'),
+    about.versionPill,
+  )
+  check(
+    'F6 关于页含构建日期（A6）',
+    /^\d{4}-\d{2}-\d{2}$/.test(about.buildDate ?? ''),
+    String(about.buildDate),
+  )
+  check(
+    'F6 关于页含更新说明与开源许可三入口（A6）',
+    about.hasChangelog &&
+      about.hasLicenseCard &&
+      about.licenseButtons.join(',') === '查看许可证,使用文档,反馈问题' &&
+      about.licenseText.includes('OFL'),
+    JSON.stringify({ buttons: about.licenseButtons, license: about.licenseText.slice(0, 40) }),
+  )
+  check(
+    'F6 快捷键一览含 Alt+Shift+M（与 H1 一致）',
+    about.shortcutKeys.includes('Alt + Shift + S') &&
+      about.shortcutKeys.includes('Alt + Shift + T') &&
+      about.shortcutKeys.includes('Alt + Shift + R') &&
+      about.shortcutKeys.includes('Alt + Shift + M'),
+    JSON.stringify(about.shortcutKeys),
+  )
   await app.screenshot({ path: path.join(OUT, '11-app-about.png'), fullPage: true })
+
+  /* ---------- B10 左侧导航口径 ---------- */
+  const nav = await app.evaluate(() => ({
+    labels: [...document.querySelectorAll('.nav-item-label')].map((n) => n.textContent?.trim()),
+    foot: document.querySelector('.nav-foot')?.innerText?.replace(/\s+/g, ' ') ?? '',
+  }))
+  check(
+    'B10 导航第 4 项为「关于 Transora」',
+    nav.labels.join(',') === '模型配置,通用设置,翻译历史,关于 Transora',
+    nav.labels.join(','),
+  )
+  check(
+    'B10 导航底部为产品版本 + Manifest V3',
+    nav.foot.includes('v0.1.0 · Manifest V3'),
+    nav.foot,
+  )
+
+  /* ---------- B9 模型表单 7 字段 ---------- */
+  await app.goto(`chrome-extension://${extensionId}/src/pages/index.html#models`, { waitUntil: 'load' })
+  await app.waitForSelector('.model-card', { timeout: 8000 })
+  // 进编辑态：点第一张模型卡的「编辑」
+  await app.locator('.model-card .tr-btn', { hasText: '编辑' }).first().click()
+  await app.waitForSelector('.editor', { timeout: 8000 })
+  const editor = await app.evaluate(() => {
+    const card = document.querySelector('.editor')
+    return {
+      labels: [...card.querySelectorAll('.field-label')].map((l) => l.textContent?.trim()),
+      selects: card.querySelectorAll('select').length,
+      targetLangOptions: [...(card.querySelectorAll('select')[0]?.querySelectorAll('option') ?? [])]
+        .map((o) => o.textContent?.trim())
+        .slice(0, 2),
+      buttons: [...card.querySelectorAll('.editor-actions .tr-btn')].map((b) =>
+        b.textContent?.trim(),
+      ),
+    }
+  })
+  check(
+    'B9 模型表单 7 个字段（含目标语言）',
+    editor.labels.length === 7 && editor.labels.includes('目标语言'),
+    editor.labels.join(','),
+  )
+  check(
+    'B9 目标语言首项为「跟随全局设置」',
+    editor.selects === 1 && (editor.targetLangOptions[0] ?? '').startsWith('跟随全局设置'),
+    JSON.stringify(editor.targetLangOptions),
+  )
+  check(
+    'B9 保存按钮文案为「保存配置」',
+    editor.buttons[0] === '保存配置',
+    JSON.stringify(editor.buttons),
+  )
 
   await app.goto(`chrome-extension://${extensionId}/src/pages/index.html#history`, { waitUntil: 'load' })
   await app.waitForSelector('.history-fields', { timeout: 8000 })

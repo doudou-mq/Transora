@@ -14,6 +14,7 @@
 import { Z } from '@/shared/constants'
 import {
   openApp,
+  openGuide,
   openSidebar,
   restorePage,
   toggleFabMenu,
@@ -217,6 +218,10 @@ export function mountFab(root: HTMLElement): FabController {
           onConfigure: () => {
             toggleFabMenu(false)
             openApp('models')
+          },
+          onGuide: () => {
+            toggleFabMenu(false)
+            openGuide()
           },
         }),
       )

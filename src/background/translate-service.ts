@@ -25,6 +25,11 @@ export interface TranslateBatchArgs {
   sourceLang: string
   targetLang: string
   useCache: boolean
+  /**
+   * E5「失败自动重试」开关（默认 true）。
+   * 关掉时退化为「只发一次」—— 请求次数与耗时更可预期，适合自建网关等已知不稳定的场景。
+   */
+  autoRetry?: boolean
   signal: AbortSignal
 }
 
@@ -53,19 +58,20 @@ interface SingleRoundResult {
   totalTokens: number
 }
 
-/** 一次模型请求（含 S13 重试） */
+/** 一次模型请求（含 S13 重试；`maxAttempts` 由 E5 开关决定） */
 async function requestWithRetry(
   model: ModelConfig,
   segments: readonly Segment[],
   sourceLang: string,
   targetLang: string,
   signal: AbortSignal,
+  maxAttempts: number,
 ): Promise<SingleRoundResult> {
   const { system, user } = buildBatchPrompt(segments, sourceLang, targetLang)
 
   let lastError: TransoraError | null = null
 
-  for (let attempt = 0; attempt <= RETRY.MAX; attempt += 1) {
+  for (let attempt = 0; attempt <= maxAttempts; attempt += 1) {
     if (signal.aborted) throw TransoraError.of('canceled')
 
     try {
@@ -83,7 +89,7 @@ async function requestWithRetry(
       if (error.info.kind === 'canceled' || !isRetryableKind(error.info.kind)) throw error
 
       // 已用尽重试次数
-      if (attempt === RETRY.MAX) throw error
+      if (attempt === maxAttempts) throw error
 
       const delay = RETRY.BASE_DELAY_MS * RETRY.FACTOR ** attempt
       await sleep(delay)
@@ -95,6 +101,8 @@ async function requestWithRetry(
 
 export async function translateBatch(args: TranslateBatchArgs): Promise<TranslateBatchResult> {
   const { model, texts, sourceLang, targetLang, useCache, signal } = args
+  // 关掉「失败自动重试」时 maxAttempts = 0，循环只跑一次
+  const maxAttempts = args.autoRetry === false ? 0 : RETRY.MAX
   const translations = new Array<string>(texts.length).fill('')
 
   /* ---------- 1. 文本级缓存 ---------- */
@@ -133,7 +141,14 @@ export async function translateBatch(args: TranslateBatchArgs): Promise<Translat
   /* ---------- 3. 请求 + 漏段补救（最多 3 轮） ---------- */
   let pending: Segment[] = segments
   for (let round = 0; round < 3 && pending.length > 0; round += 1) {
-    const result = await requestWithRetry(model, pending, sourceLang, targetLang, signal)
+    const result = await requestWithRetry(
+      model,
+      pending,
+      sourceLang,
+      targetLang,
+      signal,
+      maxAttempts,
+    )
     latencyMs += result.latencyMs
     totalTokens += result.totalTokens
 

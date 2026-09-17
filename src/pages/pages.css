@@ -561,6 +561,85 @@ body {
   line-height: 1.75;
 }
 
+/* ---- F6 补充：页首动作行 / 并排两卡 / 紧凑信息行 / 许可行 ---- */
+
+/** 通用设置页首的「恢复默认」等页级动作 */
+.section-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-bottom: 4px;
+}
+
+.about-hero-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/** 版本信息 + 快捷键一览、更新说明 + 隐私声明，各占一行两列 */
+.about-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.about-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--tr-hairline);
+}
+
+.about-row:last-child {
+  border-bottom: 0;
+}
+
+.about-row-name {
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-small);
+  line-height: 1.6;
+}
+
+.about-row-value {
+  flex: none;
+  color: var(--tr-ink);
+  font-size: var(--tr-fs-small);
+  text-align: right;
+}
+
+.about-row-tag {
+  flex: none;
+  color: var(--tr-accent);
+  font-size: var(--tr-fs-tiny);
+}
+
+.about-license {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.about-license-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.nav-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.nav-foot-ver {
+  color: var(--tr-ink-muted);
+}
+
 @media (max-width: 880px) {
   #app {
     grid-template-columns: 200px 1fr;
@@ -573,7 +652,8 @@ body {
   }
 
   .editor-grid,
-  .editor-numbers {
+  .editor-numbers,
+  .about-pair {
     grid-template-columns: 1fr;
   }
 

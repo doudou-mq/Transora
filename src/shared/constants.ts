@@ -16,6 +16,16 @@ export const CLS = {
   trBody: 'transora-tr-body',
   /** 折叠按钮 */
   trFold: 'transora-tr-fold',
+  /** 译文块标题行（G2/G8/G9：左「{目标语言}译文」+ 右状态 / 折叠） */
+  trHead: 'transora-tr-head',
+  /** 标题行左侧语言标签 */
+  trHeadLabel: 'transora-tr-head-label',
+  /** 标题行右侧状态（「翻译中…」） */
+  trHeadState: 'transora-tr-head-state',
+  /** 加载骨架容器（G8：3 条灰条） */
+  trSkeleton: 'transora-tr-skeleton',
+  /** 失败态的重试入口（G9 标题行右侧） */
+  trRetry: 'transora-tr-retry',
   /** 译文块折叠态 */
   folded: 'transora-tr--folded',
   /** 被翻译的原文块（兄弟插入场景） */
@@ -24,6 +34,26 @@ export const CLS = {
   srcInline: 'transora-src-inline',
   /** 引用块（用于侧边栏定位时高亮） */
   highlight: 'transora-highlight',
+  /** G7 页面顶部状态栏（Sticky） */
+  st: 'transora-st',
+  /** 状态栏左侧「译」章 */
+  stMark: 'transora-st-mark',
+  /** 状态栏左侧状态文案「双语对照已开启」 */
+  stTitle: 'transora-st-title',
+  /** 状态栏左侧域名 */
+  stHost: 'transora-st-host',
+  /** 状态栏右侧「42 / 56 段」 */
+  stCount: 'transora-st-count',
+  /** 状态栏进度条（4px） */
+  stBar: 'transora-st-bar',
+  /** 状态栏三态切换容器 */
+  stModes: 'transora-st-modes',
+  /** 状态栏三态切换单个药丸 */
+  stMode: 'transora-st-mode',
+  /** 状态栏目标语言下拉 */
+  stLang: 'transora-st-lang',
+  /** 状态栏退出入口 */
+  stExit: 'transora-st-exit',
 } as const
 
 /** 对照三态：挂在 documentElement 上的 class */
@@ -35,6 +65,12 @@ export const MODE_CLASS = {
 
 /** 层级体系：全部压在宿主页面之上，且内部保持有序 */
 export const Z = {
+  /**
+   * G7 状态栏是**页面级**信息条，只做展示 + 轻交互。
+   * 刻意压在 FAB / 侧边栏之下：侧边栏从右侧贴边滑出时会盖住状态栏右端，
+   * 这是可接受的（状态栏的入口都能在侧边栏/菜单里找到），反之则会挡住侧边栏头部。
+   */
+  statusbar: 2147482900,
   fab: 2147483000,
   fabMenu: 2147483001,
   /** 侧边栏是常驻面板，但在划词交互之下 —— 否则侧边栏打开时划词入口会被盖住点不动 */
@@ -99,6 +135,19 @@ export const FAB = {
 export const SIDEBAR_WIDTH = 400
 
 /**
+ * G7 页面顶部状态栏几何。
+ * 设计稿给的是「56 高卡片 + 圆角 10」，但没写贴边距离；
+ * 这里取 12px 上边距并沿用 FAB 的 18px 左右安全边，让两个注入层观感一致。
+ */
+export const STATUS_BAR = {
+  height: 56,
+  insetX: 18,
+  insetY: 12,
+  /** 进度条：设计稿 90×4 */
+  barWidth: 90,
+} as const
+
+/**
  * 划词跟随图标（G4）与划词内容块（G5）的几何 / 节奏。
  * 取值口径 = 设计稿交互规范 S5（docs/00 §A1、§D-4 已冻结），不是 G4/G5 视觉稿的像素。
  */
@@ -118,6 +167,22 @@ export const SELECTION = {
    * 用户裁决 Q5-C：保持实现现状 360px（两侧都能读，不重排）。
    */
   cardWidth: 360,
+} as const
+
+/**
+ * H2 Toast 几何与节奏。
+ * 「固定底部居中，宽 300–360；深墨底 + 橙色单动作。
+ *  成功 / 进行中 3s 自动消失，失败常驻 6s 并可手动关闭。」
+ */
+export const TOAST = {
+  minWidth: 300,
+  maxWidth: 360,
+  /** 成功 / 进行中自动消失时长 */
+  durationMs: 3000,
+  /** 失败常驻时长（到点也会消失，只是给用户留出操作时间） */
+  persistentMs: 6000,
+  /** 同一批次只报一次 Toast 的冷却窗口（docs/00 §D-1 统一规则） */
+  cooldownMs: 1200,
 } as const
 
 /** MutationObserver 防抖（docs/00 §G-3 风险 4） */

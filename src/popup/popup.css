@@ -1,6 +1,10 @@
 /**
  * Popup 样式（400×600 固定尺寸）。
- * 视觉取自 docs/07 §六 视觉基线：白底、发丝线、单一强调橙。
+ *
+ * 几何与配色全部取自设计稿 D1–D6 的内联样式：
+ *   头部 padding 20 · 正文 padding 20 gap 16 · 底部 padding 20 gap 12
+ *   按钮高 44 / 圆角 8 · 模型行高 48 / 圆角 8 · 输入行高 44 / 圆角 8
+ *   成本卡 padding 16 / 圆角 8 · 进度条高 6 · 失败提示 border 1px var(--tr-error)
  */
 
 html,
@@ -18,15 +22,14 @@ body {
   background: var(--tr-canvas);
 }
 
-/* ---------- 头部 ---------- */
+/* ---------- 头部（D1–D6 同一形态） ---------- */
 
 .popup-header {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid var(--tr-hairline);
+  padding: 20px;
 }
 
 .popup-brand {
@@ -35,223 +38,467 @@ body {
   gap: 8px;
 }
 
-.popup-brand-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
+.popup-logo {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
   background: var(--tr-accent);
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
 }
 
-.popup-brand-name {
-  font-size: var(--tr-fs-section);
+.popup-wm {
+  font-size: 15px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: -0.2px;
 }
 
-.popup-icon-btn {
+.popup-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.popup-icon {
   all: unset;
-  padding: 4px 10px;
-  border: 1px solid var(--tr-hairline);
-  border-radius: var(--tr-radius-block);
-  color: var(--tr-ink-muted);
-  font-family: inherit;
-  font-size: var(--tr-fs-tiny);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--tr-ink-body);
   cursor: pointer;
-  transition: background 0.12s ease, color 0.12s ease;
+  transition: color 0.12s ease;
 }
 
-.popup-icon-btn:hover {
-  background: var(--tr-surface-warm);
-  color: var(--tr-ink);
+.popup-icon:hover {
+  color: var(--tr-accent);
 }
 
-/* ---------- 主体 ---------- */
+/* ---------- 正文与底部 ---------- */
 
 .popup-body {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 12px;
+  gap: 16px;
+  box-sizing: border-box;
   overflow-y: auto;
-  padding: 14px 16px;
+  padding: 20px;
 }
 
-.popup-card {
+/* D1 空态：整块垂直居中、内容左对齐 */
+.popup-body--center {
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.popup-footer {
   display: flex;
+  flex: 0 0 auto;
+  gap: 12px;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 20px;
+}
+
+.popup-footer--stack {
   flex-direction: column;
   gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--tr-hairline);
-  border-radius: var(--tr-radius-card);
+  align-items: stretch;
 }
 
-.popup-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.popup-card-title {
-  font-size: var(--tr-fs-small);
+.popup-field-label {
+  color: var(--tr-ink-muted);
+  font-size: 11px;
   font-weight: 500;
 }
 
-.popup-status {
-  padding: 2px 8px;
-  border-radius: var(--tr-radius-pill);
-  background: var(--tr-surface-warm);
-  color: var(--tr-ink-muted);
-  font-size: var(--tr-fs-tiny);
+.popup-hairline {
+  height: 1px;
+  background: var(--tr-hairline-mid);
 }
 
-.popup-status--busy {
-  background: var(--tr-accent-soft);
-  color: var(--tr-accent);
-}
+/* ---------- 按钮（高 44 / 圆角 8） ---------- */
 
-.popup-status--done {
-  background: var(--tr-success-bg);
-  color: var(--tr-success);
-}
-
-.popup-status--muted {
-  color: var(--tr-ink-faint);
-}
-
-.popup-primary {
-  width: 100%;
-  height: 40px;
-  font-size: var(--tr-fs-section);
-}
-
-.popup-primary--ghost {
-  background: var(--tr-canvas);
-  border-color: var(--tr-hairline-strong);
+.popup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 22px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
   color: var(--tr-ink);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
-.popup-primary--ghost:hover:not(:disabled) {
+.popup-btn--primary {
+  background: var(--tr-accent);
+  color: var(--tr-on-accent);
+}
+
+.popup-btn--primary:hover:not(:disabled) {
+  background: var(--tr-accent-hover);
+}
+
+.popup-btn--secondary {
+  border-color: var(--tr-hairline-strong);
+  background: var(--tr-canvas);
+}
+
+.popup-btn--secondary:hover:not(:disabled) {
   background: var(--tr-surface-warm);
 }
 
-.popup-secondary {
+.popup-btn--dark {
+  background: var(--tr-ink);
+  color: #ffffff;
+}
+
+.popup-btn--dark:hover:not(:disabled) {
+  background: #3a382f;
+}
+
+.popup-btn--grow {
+  flex: 1 1 auto;
+}
+
+.popup-btn--fixed {
+  flex: 0 0 120px;
+}
+
+.popup-btn--wide {
+  flex: 0 0 176px;
+}
+
+.popup-btn--block {
+  width: 100%;
+}
+
+.popup-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------- D1 空态 ---------- */
+
+.popup-empty-icon {
   display: flex;
+  color: var(--tr-muted-soft);
+}
+
+.popup-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.popup-empty-desc {
+  color: var(--tr-ink-muted);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.popup-guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.popup-guide-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.popup-guide-num {
+  display: grid;
+  flex: none;
+  place-items: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: var(--tr-radius-pill);
+  background: var(--tr-canvas);
+  color: var(--tr-ink-muted);
+  font-family: var(--tr-font-mono);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.popup-guide-step-text {
+  color: var(--tr-ink-body);
+  font-family: var(--tr-font-mono);
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.popup-footnote {
+  color: var(--tr-muted-soft);
+  font-size: 11px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.popup-footnote--left {
+  text-align: left;
+}
+
+/* ---------- D2 就绪态：模型单选列表 ---------- */
+
+.popup-model-list {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
 }
 
-.popup-secondary .tr-btn {
-  flex: 1 1 0;
-}
-
-.popup-subsection {
+.popup-model-row {
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-top: 10px;
-  border-top: 1px solid var(--tr-hairline);
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 48px;
+  padding: 0 12px;
+  border: 1px solid var(--tr-hairline-mid);
+  border-radius: 8px;
+  background: var(--tr-canvas);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
-.popup-subsection-label {
-  color: var(--tr-ink-muted);
-  font-size: var(--tr-fs-tiny);
+.popup-model-row:hover {
+  background: var(--tr-surface-warm);
 }
+
+.popup-model-row.is-selected {
+  border-color: var(--tr-accent);
+}
+
+.popup-cbx {
+  display: grid;
+  flex: none;
+  place-items: center;
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: 4px;
+  background: var(--tr-canvas);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.popup-model-row.is-selected .popup-cbx {
+  border-color: var(--tr-accent);
+  background: var(--tr-accent);
+}
+
+.popup-model-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--tr-ink);
+  font-size: 14px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.popup-model-id {
+  flex: none;
+  color: var(--tr-muted-soft);
+  font-family: var(--tr-font-mono);
+  font-size: 11px;
+}
+
+/* ---------- 输入行（目标语言） ---------- */
+
+.popup-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: 8px;
+  background: var(--tr-canvas);
+  color: var(--tr-ink);
+  font-size: 13px;
+}
+
+.popup-input-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+}
+
+.popup-input-caret {
+  flex: none;
+  color: var(--tr-ink-muted);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* ---------- 三态切换（G3 药丸形态） ---------- */
 
 .popup-segmented {
   display: flex;
+  align-self: flex-start;
   gap: 2px;
-  padding: 2px;
-  border-radius: var(--tr-radius-block);
-  background: var(--tr-surface-warm);
+  padding: 3px;
+  border: 1px solid var(--tr-hairline);
+  border-radius: var(--tr-radius-pill);
+  background: var(--tr-canvas);
 }
 
 .popup-segment {
   all: unset;
-  flex: 1 1 0;
-  padding: 6px 0;
-  border-radius: 6px;
+  box-sizing: border-box;
+  padding: 4px 10px;
+  border-radius: var(--tr-radius-pill);
   color: var(--tr-ink-muted);
   font-family: inherit;
-  font-size: var(--tr-fs-tiny);
+  font-size: 11px;
+  line-height: 1.5;
   text-align: center;
   cursor: pointer;
 }
 
 .popup-segment.is-active {
-  background: var(--tr-canvas);
-  color: var(--tr-ink);
+  background: var(--tr-accent);
+  color: #ffffff;
   font-weight: 500;
 }
 
-/* ---------- 配置卡 ---------- */
+/* ---------- D3 成本提示 ---------- */
 
-.popup-card--config {
-  gap: 4px;
-}
-
-.popup-row {
-  display: grid;
-  grid-template-columns: 72px 1fr;
-  gap: 10px;
-  align-items: center;
-}
-
-.popup-row-label {
-  color: var(--tr-ink-muted);
-  font-size: var(--tr-fs-small);
-}
-
-/* ---------- 未配置空态 ---------- */
-
-.popup-guide {
+.popup-cost-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 20px 18px;
-  border: 1px dashed var(--tr-hairline-strong);
-  border-radius: var(--tr-radius-card);
+  gap: 12px;
+  box-sizing: border-box;
+  padding: 16px;
+  border: 1px solid var(--tr-hairline-mid);
+  border-radius: 8px;
+  background: var(--tr-canvas);
+}
+
+.popup-cost-title {
+  color: var(--tr-ink);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.popup-cost-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--tr-ink-body);
+  font-family: var(--tr-font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.popup-cost-row {
+  white-space: pre-wrap;
+}
+
+/* ---------- D4 翻译中 ---------- */
+
+.popup-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.popup-progress-title {
+  color: var(--tr-ink);
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.popup-progress-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: var(--tr-radius-pill);
+  background: var(--tr-hairline-mid);
+}
+
+.popup-progress-fill {
+  height: 6px;
+  border-radius: var(--tr-radius-pill);
+  background: var(--tr-accent);
+  transition: width 0.2s ease;
+}
+
+.popup-progress-meta {
+  color: var(--tr-ink-muted);
+  font-family: var(--tr-font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ---------- D6 部分失败 ---------- */
+
+.popup-note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  padding: 14px;
+  border: 1px solid var(--tr-hairline);
+  border-radius: 8px;
   background: var(--tr-surface-warm);
 }
 
-.popup-guide-title {
-  font-size: var(--tr-fs-section);
-  font-weight: 600;
+.popup-note--error {
+  border-color: var(--tr-error);
+  background: var(--tr-error-bg);
 }
 
-.popup-guide-desc {
-  color: var(--tr-ink-muted);
-  font-size: var(--tr-fs-small);
+.popup-note-title {
+  color: var(--tr-error);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.popup-note-desc {
+  color: var(--tr-ink-body);
+  font-size: 13px;
   line-height: 1.7;
-}
-
-.popup-guide .tr-btn {
-  align-self: flex-start;
-}
-
-.popup-footnote {
-  color: var(--tr-ink-faint);
-  font-size: var(--tr-fs-tiny);
-  line-height: 1.6;
-  text-align: center;
-}
-
-/* ---------- 底部 ---------- */
-
-.popup-footer {
-  display: flex;
-  flex: 0 0 auto;
-  gap: 16px;
-  padding: 10px 16px 14px;
-  border-top: 1px solid var(--tr-hairline);
-}
-
-.popup-link {
-  all: unset;
-  color: var(--tr-ink-muted);
-  font-family: inherit;
-  font-size: var(--tr-fs-tiny);
-  cursor: pointer;
-}
-
-.popup-link:hover {
-  color: var(--tr-accent);
 }

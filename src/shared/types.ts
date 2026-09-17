@@ -19,6 +19,14 @@ export interface ModelConfig {
   endpoint: string
   apiKey: string
   model: string
+  /**
+   * 该模型的默认目标语言（设计稿 E2 表单第 5 个字段）。
+   *
+   * 留空 = **跟随全局设置**（通用设置里的「默认目标语言」）。
+   * 这样 E2 表单能对齐设计稿的 7 字段，又不会和全局设置互相打架 ——
+   * docs/00 §A4 冻结的「目标语言由用户选、固定 9 种」仍然成立，这里只是一个可选覆盖。
+   */
+  targetLang?: string
   temperature: number
   maxTokens: number
   enabled: boolean
@@ -34,6 +42,8 @@ export interface Settings {
   displayMode: DisplayMode
   /** 翻译缓存开关（S12，默认开） */
   cacheEnabled: boolean
+  /** 失败自动重试开关（E5 / S13：单批失败固定重试 2 次 + 指数退避，默认开） */
+  autoRetry: boolean
   /** 历史上限（S11） */
   historyLimit: number
   /** 全文对比模型上限（S5） */

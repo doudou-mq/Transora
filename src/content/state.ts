@@ -65,6 +65,7 @@ export const state: PageState = {
     sourceLang: 'en',
     displayMode: 'bilingual',
     cacheEnabled: true,
+    autoRetry: true,
     historyLimit: 1000,
     maxModelsForCompare: 3,
     lastModelId: null,
@@ -121,6 +122,16 @@ export function activeModel(): ModelConfig | null {
   if (state.models.length === 0) return null
   const preferred = state.settings.lastModelId
   return state.models.find((m) => m.id === preferred) ?? state.models[0]
+}
+
+/**
+ * 解析本次翻译实际使用的目标语言。
+ *
+ * 优先级：模型的 `targetLang`（E2 表单里的可选覆盖）→ 全局「默认目标语言」。
+ * 模型表单留空即跟随全局 —— 这样 E2 的 7 字段与「目标语言由用户统一指定」的冻结口径不冲突。
+ */
+export function targetLangFor(model: ModelConfig | null): string {
+  return model?.targetLang?.trim() || state.settings.targetLang
 }
 
 /** 是否处于「未配置」状态（D-4：四处挂载点共用同一判据） */

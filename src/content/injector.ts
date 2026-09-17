@@ -15,6 +15,7 @@
  */
 
 import { CLS, MODE_CLASS } from '@/shared/constants'
+import { langDisplayName } from '@/shared/langs'
 import type { DisplayMode, ErrorInfo } from '@/shared/types'
 import { el } from '@/shared/utils'
 
@@ -22,13 +23,49 @@ const DATA_ATTR = 'data-transora'
 
 function chevronSvg(): string {
   return (
-    '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">' +
-    '<path d="M4 6.5L8 10l4-3.5" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+    '<svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">' +
+    '<path d="M3 4.5L6 7.5L9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" ' +
     'stroke-linecap="round" stroke-linejoin="round"/></svg>'
   )
 }
 
-/** 创建一个译文块节点（含正文容器与折叠按钮） */
+/** 创建元素并写入文本 */
+function elText<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  className: string,
+  text: string,
+): HTMLElementTagNameMap[K] {
+  const node = el(tag, className)
+  node.textContent = text
+  return node
+}
+
+/** 「{目标语言}译文」—— 目标语言可选 9 种，所以标题行不写死「中文译文」（G2 图例的取值） */
+function headLabelOf(node: HTMLElement): string {
+  return `${langDisplayName(node.getAttribute('lang') ?? '')}译文`
+}
+
+/** 读取标题行上的语言标签 / 状态槽（节点由 createTranslationNode 建立，此处只做查询） */
+function headLabel(node: HTMLElement): HTMLElement | null {
+  return node.querySelector<HTMLElement>(`.${CLS.trHeadLabel}`)
+}
+
+function headState(node: HTMLElement): HTMLElement | null {
+  return node.querySelector<HTMLElement>(`.${CLS.trHeadState}`)
+}
+
+/** G8 加载骨架：固定 3 条（100% / 452px / 288px，高 10，圆角 4） */
+function buildSkeleton(): HTMLElement {
+  const wrap = el('span', CLS.trSkeleton)
+  for (const width of ['100%', '452px', '288px']) {
+    const bar = el('i')
+    bar.style.width = width
+    wrap.appendChild(bar)
+  }
+  return wrap
+}
+
+/** 创建一个译文块节点（标题行 + 正文容器 + 折叠按钮），初始为加载态 */
 export function createTranslationNode(
   source: HTMLElement,
   targetLang: string,
@@ -43,8 +80,10 @@ export function createTranslationNode(
   const fontSize = window.getComputedStyle(source).fontSize
   if (fontSize) node.style.setProperty('--transora-fs', fontSize)
 
-  const body = el('div', CLS.trBody)
-  node.appendChild(body)
+  const head = el('div', CLS.trHead)
+  const label = elText('span', CLS.trHeadLabel, headLabelOf(node))
+  const state = elText('span', CLS.trHeadState, '翻译中…')
+  head.append(label, state)
 
   const fold = el('button', CLS.trFold, { type: 'button', title: '收起 / 展开译文' })
   fold.innerHTML = chevronSvg()
@@ -53,7 +92,12 @@ export function createTranslationNode(
     event.stopPropagation()
     node.classList.toggle(CLS.folded)
   })
-  node.appendChild(fold)
+  head.appendChild(fold)
+  node.appendChild(head)
+
+  const body = el('div', CLS.trBody)
+  body.appendChild(buildSkeleton())
+  node.appendChild(body)
 
   return { node, body }
 }
@@ -77,16 +121,34 @@ export function insertTranslationNode(source: HTMLElement, node: HTMLElement): b
   return false
 }
 
-/** 写入译文正文 */
+/** 写入译文正文（G2：标题行「{目标语言}译文」+ 正文 14px/1.75） */
 export function setTranslationText(node: HTMLElement, body: HTMLElement, text: string): void {
   node.classList.remove(`${CLS.tr}--loading`, `${CLS.tr}--error`)
+  body.classList.remove('is-error')
   body.textContent = text
+
+  const label = headLabel(node)
+  if (label) {
+    label.textContent = headLabelOf(node)
+    label.classList.remove('is-error')
+  }
+  const state = headState(node)
+  if (state) state.textContent = ''
+  clearRetry(node)
+
   // 短文本无需折叠
   if (text.length < 120) node.classList.add(`${CLS.tr}--short`)
   else node.classList.remove(`${CLS.tr}--short`)
 }
 
-/** 写入错误占位（不弹 alert，保持块内联，docs/00 §D-1 统一规则） */
+function clearRetry(node: HTMLElement): void {
+  node.querySelector(`.${CLS.trRetry}`)?.remove()
+}
+
+/**
+ * 写入错误占位（不弹 alert，保持块内联，docs/00 §D-1 统一规则）。
+ * 布局取 G9：砖红左条 + 「翻译失败」标题行 + 右侧「重试」+ 13px 说明。
+ */
 export function setTranslationError(
   node: HTMLElement,
   body: HTMLElement,
@@ -96,28 +158,51 @@ export function setTranslationError(
   node.classList.remove(`${CLS.tr}--loading`)
   node.classList.add(`${CLS.tr}--error`)
   body.textContent = ''
+  body.classList.add('is-error')
 
-  const message = el('span', `${CLS.tr}-error-text`)
-  message.textContent = error.message
-  body.appendChild(message)
+  const label = headLabel(node)
+  if (label) {
+    label.textContent = '翻译失败'
+    label.classList.add('is-error')
+  }
+  const state = headState(node)
+  if (state) state.textContent = ''
+  clearRetry(node)
 
   if (onRetry && error.retryable) {
-    const retry = el('button', `${CLS.tr}-error-retry`, { type: 'button' })
+    const retry = el('button', CLS.trRetry, { type: 'button' })
     retry.textContent = '重试'
     retry.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
       onRetry()
     })
-    body.appendChild(retry)
+    headLabel(node)?.after(retry)
   }
+
+  const message = el('span', `${CLS.tr}-error-text`)
+  message.textContent = error.message
+  body.appendChild(message)
 }
 
-/** 标记某块回到 loading 态（重试时使用） */
+/** 标记某块回到 loading 态（重试时使用）：标题行恢复语言标签 + 「翻译中…」 + 骨架条 */
 export function setTranslationLoading(node: HTMLElement, body: HTMLElement): void {
   node.classList.remove(`${CLS.tr}--error`)
   node.classList.add(`${CLS.tr}--loading`)
+  clearRetry(node)
+
+  const label = headLabel(node)
+  if (label) {
+    label.textContent = headLabelOf(node)
+    label.classList.remove('is-error')
+  }
+  const state = headState(node)
+  if (state) state.textContent = '翻译中…'
+
   body.textContent = ''
+  body.classList.remove('is-error')
+  body.appendChild(buildSkeleton())
+  return
 }
 
 /* ------------------------------------------------------------------ */

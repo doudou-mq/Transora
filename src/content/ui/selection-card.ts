@@ -18,7 +18,7 @@ import { SELECTION, SIDEBAR_WIDTH, Z } from '@/shared/constants'
 import { langDisplayName, langShortName } from '@/shared/langs'
 import { groupByProvider, type ProviderGroup } from '@/shared/providers'
 import type { ErrorInfo, ModelConfig } from '@/shared/types'
-import { openApp, openSidebar, translateSelectionText } from '../actions'
+import { openApp, openGuide, openSidebar, translateSelectionText } from '../actions'
 import { activeModel, isUnconfigured, state } from '../state'
 import { createGuideCard } from './guide-card'
 import { ICONS } from './icons'
@@ -318,6 +318,10 @@ export function mountSelectionCard(
           onConfigure: () => {
             hide()
             openApp('models')
+          },
+          onGuide: () => {
+            hide()
+            openGuide()
           },
         }),
       )

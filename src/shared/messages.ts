@@ -23,12 +23,16 @@ export const MSG = {
   GET_STATE: 'transora/get-state',
   /** 任意页面 → BG：写入设置 */
   PATCH_SETTINGS: 'transora/patch-settings',
+  /** 任意页面 → BG：恢复默认设置（E5 页首按钮，不动模型与缓存） */
+  RESET_SETTINGS: 'transora/reset-settings',
   /** 任意页面 → BG：打开扩展独立页 */
   OPEN_APP_PAGE: 'transora/open-app-page',
   /** Popup → Content：查询当前页翻译状态 */
   PAGE_STATUS: 'transora/page-status',
   /** BG → Content：执行一条指令 */
   CMD: 'transora/cmd',
+  /** Content → BG：上报整页翻译进度，供工具栏角标（H3）显示 */
+  TRANSLATE_PROGRESS: 'transora/translate-progress',
 } as const
 
 /** Background 下发给内容脚本的指令 */
@@ -37,6 +41,23 @@ export type ContentCommand =
   | 'restore'
   | 'translate-selection'
   | 'toggle-sidebar'
+  /** 只重试当前页上失败的块（D6「重试失败批次」） */
+  | 'retry-failed'
+  /** H1 右键菜单：复制选中原文 */
+  | 'copy-source'
+  /** H1 右键菜单：复制选中内容的译文 */
+  | 'copy-translation'
+  /** H1 快捷键 Alt+Shift+M：对照 → 译文 → 原文 循环 */
+  | 'toggle-display-mode'
+
+/**
+ * 指令附带的数据。
+ * 右键菜单的 `info.selectionText` 是浏览器已经算好的选区文本，
+ * 直接带下来最可靠 —— 内容脚本再读一次 `getSelection()` 在 iframe / 失焦场景下可能为空。
+ */
+export interface ContentCommandPayload {
+  text?: string
+}
 
 export interface TranslateBatchRequest {
   type: typeof MSG.TRANSLATE_BATCH
@@ -93,10 +114,38 @@ export interface PatchSettingsRequest {
   patch: Partial<Settings>
 }
 
+export interface ResetSettingsRequest {
+  type: typeof MSG.RESET_SETTINGS
+}
+
+/**
+ * 整页翻译进度上报（Content → Background）。
+ *
+ * 为什么由内容脚本上报：批次切分与总块数只有内容脚本知道（docs/04 §八的分工），
+ * Background 每次只看到一批，算不出「42 / 56」里的 56。
+ */
+export interface TranslateProgressRequest {
+  type: typeof MSG.TRANSLATE_PROGRESS
+  /** progress = 进行中（角标显示已译块数）；done / failed = 收尾三态；clear = 清空角标 */
+  phase: 'progress' | 'done' | 'failed' | 'clear'
+  done: number
+  total: number
+}
+
 export interface OpenAppPageRequest {
   type: typeof MSG.OPEN_APP_PAGE
   /** 目标区块：models / general / history / about */
   hash?: string
+}
+
+/** 本轮全文翻译的「成本预估」输入（D3 翻译前确认） */
+export interface PagePlan {
+  /** 待翻译块数 */
+  blocks: number
+  /** 待翻译总字符数（含空白归一化后的长度） */
+  chars: number
+  /** 已切分出的批次数（按 docs/00 §D-2 的上限推算） */
+  batches: number
 }
 
 /** 当前页翻译状态（由内容脚本应答 Popup 的查询） */
@@ -106,6 +155,12 @@ export interface PageStatusResponse {
   status?: 'idle' | 'translating' | 'translated'
   progress?: { done: number; total: number }
   entryCount?: number
+  /** 已注入但失败的块数（D6「部分失败」判据） */
+  failedCount?: number
+  /** 可取消（正在翻译）时的会话标记，供 Popup 显示取消 */
+  cancellable?: boolean
+  /** 未开始翻译时的成本预估（D3）；翻译中 / 已完成时为 undefined */
+  plan?: PagePlan
 }
 
 /** 统一的消息信封校验，避免把非本扩展的消息当成自己的 */
@@ -123,10 +178,14 @@ export async function sendToBackground<TResponse>(payload: object): Promise<TRes
   return (await chrome.runtime.sendMessage(payload)) as TResponse
 }
 
-/** 向指定标签页发送指令 */
-export async function sendToTab(tabId: number, command: ContentCommand): Promise<void> {
+/** 向指定标签页发送指令（可携带文本载荷，见 ContentCommandPayload） */
+export async function sendToTab(
+  tabId: number,
+  command: ContentCommand,
+  payload?: ContentCommandPayload,
+): Promise<void> {
   try {
-    await chrome.tabs.sendMessage(tabId, { type: MSG.CMD, command })
+    await chrome.tabs.sendMessage(tabId, { type: MSG.CMD, command, payload })
   } catch {
     // 目标标签页没有内容脚本（如 chrome:// 页面）时静默失败
   }

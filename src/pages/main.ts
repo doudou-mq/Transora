@@ -9,7 +9,7 @@ import '@/shared/tokens.css'
 import './pages.css'
 
 import { STORAGE_KEYS } from '@/shared/constants'
-import { bindReload, el, loadState } from './store'
+import { bindReload, el, loadState, PRODUCT_VERSION } from './store'
 import { renderAbout } from './sections/about'
 import { renderGeneral } from './sections/general'
 import { renderHistory } from './sections/history'
@@ -28,7 +28,7 @@ const SECTIONS: SectionMeta[] = [
   { key: 'models', label: '模型配置', desc: '接入你自己的 OpenAI 兼容服务', render: renderModels },
   { key: 'general', label: '通用设置', desc: '语言、显示模式与缓存', render: renderGeneral },
   { key: 'history', label: '翻译历史', desc: '本机保存的全部翻译记录', render: renderHistory },
-  { key: 'about', label: '关于', desc: '版本、权限与隐私', render: renderAbout },
+  { key: 'about', label: '关于 Transora', desc: '版本、权限与隐私', render: renderAbout },
 ]
 
 function currentKey(): string {
@@ -59,7 +59,9 @@ function buildNav(activeKey: string): HTMLElement {
   nav.appendChild(list)
 
   const foot = el('div', 'nav-foot')
-  foot.textContent = '数据全部保存在本机 · 无账号 · 不上传'
+  // 版本口径（docs/00 §C3）：这里显示**产品版本**，不是设计稿版本
+  foot.appendChild(el('span', 'nav-foot-ver', `v${PRODUCT_VERSION} · Manifest V3`))
+  foot.appendChild(el('span', 'nav-foot-note', '数据全部保存在本机 · 无账号 · 不上传'))
   nav.appendChild(foot)
 
   return nav

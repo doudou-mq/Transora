@@ -14,22 +14,30 @@
 
   /* 文字 */
   --tr-ink: #26251e;
+  --tr-ink-body: #5a5852;
   --tr-ink-muted: #807d72;
   --tr-ink-faint: #a8a49a;
+  --tr-muted-soft: #a09c92;
   --tr-on-accent: #ffffff;
 
   /* 线与强调 */
   --tr-hairline: #efeee8;
+  --tr-hairline-mid: #e6e5e0;
   --tr-hairline-strong: #e2e0d8;
   --tr-accent: #f54e00;
   --tr-accent-hover: #d94400;
   --tr-accent-soft: #fdf0e9;
 
-  /* 语义色 */
+  /* 语义色（设计稿把「注入页内」的告警橙与「扩展页面」的错误红分成两组） */
+  --tr-warn: #c2410c;
+  --tr-warn-bg: #fbf1ec;
   --tr-danger: #c2410c;
   --tr-danger-bg: #fbf1ec;
+  --tr-error: #cf2d56;
+  --tr-error-bg: #fdf2f5;
   --tr-success: #1f7a4d;
   --tr-success-bg: #eef7f2;
+  --tr-success-text: #1f8a65;
 
   /* 圆角 */
   --tr-radius-card: 10px;
@@ -198,6 +206,11 @@ body {
 .tr-pill--accent {
   background: var(--tr-accent-soft);
   color: var(--tr-accent);
+}
+
+.tr-pill--done {
+  background: var(--tr-success-bg);
+  color: var(--tr-success);
 }
 
 .tr-hairline {

@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: Settings = {
   sourceLang: DEFAULT_SOURCE_LANG,
   displayMode: 'bilingual',
   cacheEnabled: true,
+  autoRetry: true,
   historyLimit: HISTORY_LIMIT,
   maxModelsForCompare: MAX_COMPARE_MODELS,
   lastModelId: null,
@@ -41,6 +42,18 @@ export async function getSettings(): Promise<Settings> {
 /** 局部更新设置，返回更新后的完整设置 */
 export async function setSettings(patch: Partial<Settings>): Promise<Settings> {
   const next = { ...(await getSettings()), ...patch }
+  await writeKey(STORAGE_KEYS.settings, next)
+  return next
+}
+
+/**
+ * E5 页首「恢复默认」：把设置整体写回 `DEFAULT_SETTINGS`。
+ *
+ * 只重置**设置**，不动模型配置与翻译缓存 —— 模型是用户填了 Key 的资产，
+ * 一个「恢复默认值」按钮不该把它清掉。
+ */
+export async function resetSettings(): Promise<Settings> {
+  const next = { ...DEFAULT_SETTINGS }
   await writeKey(STORAGE_KEYS.settings, next)
   return next
 }

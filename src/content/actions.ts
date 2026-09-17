@@ -4,7 +4,10 @@
  * 保证同一动作在任何入口下行为一致。
  */
 
+import { GUIDE_DOC_HASH, TOAST_COPY } from '@/shared/copy'
+import { CONCURRENCY } from '@/shared/constants'
 import { errorInfoOf } from '@/shared/errors'
+import { langDisplayName } from '@/shared/langs'
 import { MSG, sendToBackground, type ContentCommand } from '@/shared/messages'
 import type { DisplayMode, ErrorInfo } from '@/shared/types'
 import { uid } from '@/shared/utils'
@@ -24,6 +27,7 @@ import {
   activeModel,
   emit,
   state,
+  targetLangFor,
   type PageEntry,
   type SelectionRecord,
   type SidebarTab,
@@ -33,6 +37,27 @@ import type { RunOptions } from './translator'
 import { destroyToast, toast } from './ui/toast'
 
 const MAX_SELECTION_RECORDS = 50
+
+/* ------------------------------------------------------------------ */
+/* Toast 快捷方式（H2 三态 + 单一动作）                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 未配置模型：文案取 docs/00 §D-1 表格（唯一口径），动作取该行的 `[去配置]`。
+ * **不自动跳转** —— D-4 要求「就地渲染引导卡」，把选择权留给用户。
+ */
+function toastNoModel(): void {
+  toast(errorInfoOf('no-model').message, {
+    kind: 'error',
+    persistent: true,
+    action: { label: TOAST_COPY.goConfigure, onClick: () => openApp('models') },
+  })
+}
+
+/** 引导卡次按钮「查看配置指引」：指向新标签页的使用文档（S6） */
+export function openGuide(): void {
+  openApp(GUIDE_DOC_HASH)
+}
 
 /* ------------------------------------------------------------------ */
 /* 页面跳转 / 侧边栏                                                    */
@@ -94,6 +119,46 @@ export async function setDisplayMode(mode: DisplayMode): Promise<void> {
   await sendToBackground({ type: MSG.PATCH_SETTINGS, patch: { displayMode: mode } })
 }
 
+/** Alt+Shift+M 的循环次序（H1 / F6 冻结文案：切换 对照 / 译文 / 原文） */
+const MODE_CYCLE: readonly DisplayMode[] = ['bilingual', 'translation-only', 'original-only']
+
+/**
+ * 按设计稿次序循环切换三态。
+ * 只改显示，**不重新请求**（FR-16）—— 译文块的 DOM 一直在，靠 documentElement 上的 class 控制可见性。
+ */
+export function cycleDisplayMode(): void {
+  const current = state.settings.displayMode
+  const next = MODE_CYCLE[(MODE_CYCLE.indexOf(current) + 1) % MODE_CYCLE.length] ?? 'bilingual'
+  void setDisplayMode(next)
+}
+
+/** 目标语言（G7 状态栏 / 设置页共用）。已有译文不会被改写，重新翻译后才生效。 */
+export async function setTargetLang(lang: string): Promise<void> {
+  if (lang === state.settings.targetLang) return
+  state.settings.targetLang = lang
+  emit()
+  await sendToBackground({ type: MSG.PATCH_SETTINGS, patch: { targetLang: lang } })
+  if (state.entries.size > 0) {
+    toast(`目标语言已设为 ${langDisplayName(lang)}，重新翻译后生效`)
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* H3 工具栏角标                                                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 上报整页翻译进度，供 Background 更新工具栏角标（A2 / H3）。
+ * 总块数只有内容脚本知道（批次切分在内容侧），所以必须由这里推上去。
+ */
+function reportProgress(
+  phase: 'progress' | 'done' | 'failed' | 'clear',
+  done: number,
+  total: number,
+): void {
+  void sendToBackground({ type: MSG.TRANSLATE_PROGRESS, phase, done, total })
+}
+
 /* ------------------------------------------------------------------ */
 /* 全文翻译                                                            */
 /* ------------------------------------------------------------------ */
@@ -106,7 +171,7 @@ function currentOptions(type: RunOptions['type']): RunOptions | null {
   return {
     model,
     sourceLang: state.settings.sourceLang,
-    targetLang: state.settings.targetLang,
+    targetLang: targetLangFor(model),
     useCache: state.settings.cacheEnabled,
     type,
   }
@@ -134,8 +199,7 @@ function ensureEntry(block: BlockCandidate): PageEntry {
 async function retryEntry(entry: PageEntry): Promise<void> {
   const options = currentOptions('fullpage')
   if (!options) {
-    toast('尚未配置模型', 'error')
-    openApp('models')
+    toastNoModel()
     return
   }
 
@@ -156,14 +220,87 @@ async function retryEntry(entry: PageEntry): Promise<void> {
   emit()
 }
 
+/** 已翻译块数（成功 + 失败都算已出块，用于「恢复原文」等判定） */
+function failedEntries(): PageEntry[] {
+  return [...state.entries.values()].filter((entry) => entry.error !== null)
+}
+
+/**
+ * D6「重试失败批次」：只重跑当前页上失败的块，并发与全文一致（docs/00 §D-2 上限 3）。
+ * 已成功的块与已写入的译文**完全不动**。
+ */
+export async function retryFailedEntries(): Promise<void> {
+  const targets = failedEntries()
+  if (targets.length === 0) {
+    toast('没有需要重试的段落')
+    return
+  }
+  if (!currentOptions('fullpage')) {
+    toastNoModel()
+    return
+  }
+  if (isTranslating()) return
+
+  const run = { canceled: false }
+  currentRun = run
+  state.status = 'translating'
+  state.lastError = null
+
+  const already = state.entries.size - targets.length
+  state.progress = { done: already, total: state.entries.size }
+  emit()
+  toast(`正在重试… ${already} / ${state.entries.size} 段`, {
+    action: { label: TOAST_COPY.cancel, muted: true, onClick: () => toggleTranslatePage() },
+  })
+
+  const queue = [...targets]
+  let done = already
+
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (run.canceled) return
+      const next = queue.shift()
+      if (!next) return
+      await retryEntry(next)
+      done += 1
+      state.progress = { done, total: state.entries.size }
+      emit()
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY.FULL_PAGE, targets.length) }, worker))
+
+  const canceled = run.canceled
+  if (currentRun === run) currentRun = null
+  if (canceled) return
+
+  const stillFailed = failedEntries().length
+  state.lastRunFailed = stillFailed > 0
+  state.status = state.entries.size > 0 ? 'translated' : 'idle'
+  emit()
+
+  if (stillFailed === 0) {
+    toast('失败段落已全部重试成功', {
+      kind: 'success',
+      action: { label: TOAST_COPY.undo, onClick: () => restorePage() },
+    })
+  } else {
+    toast(`仍有 ${stillFailed} 段失败`, {
+      kind: 'error',
+      persistent: true,
+      action: { label: TOAST_COPY.goSettings, onClick: () => openApp('models') },
+    })
+  }
+}
+
 /** 翻译整页（FR-01） */
 export async function runFullPageTranslation(): Promise<void> {
   const options = currentOptions('fullpage')
   if (!options) {
     state.lastError = errorInfoOf('no-model')
     emit()
-    toast('尚未配置模型', 'error')
-    openApp('models')
+    // docs/00 §D-4：不进入「翻译中」，就地引导；不自动跳转设置页
+    toastNoModel()
     return
   }
 
@@ -189,7 +326,16 @@ export async function runFullPageTranslation(): Promise<void> {
   applyDisplayMode(state.settings.displayMode)
   emit()
 
+  // H3：进「翻译中」先点亮角标（0 段时数字留空，只有橙色底）
+  reportProgress('progress', 0, blocks.length)
+
+  // H2 进行中态：带进度 + 单一动作「取消」（弱化为次要文字色）
+  toast(`正在翻译… 0 / ${blocks.length} 段`, {
+    action: { label: TOAST_COPY.cancel, muted: true, onClick: () => toggleTranslatePage() },
+  })
+
   let failed = 0
+  const startedAt = Date.now()
 
   await translateBlocks(blocks, options, {
     onResult: (block, text) => {
@@ -210,6 +356,12 @@ export async function runFullPageTranslation(): Promise<void> {
     onProgress: (done, total) => {
       state.progress = { done, total }
       emit()
+      // H3：工具栏角标同步显示已译块数
+      reportProgress('progress', done, total)
+      // 与起始 Toast 同一实例：冷却窗口内只更新文案，不堆叠（docs/00 §D-1）
+      toast(`正在翻译… ${done} / ${total} 段`, {
+        action: { label: TOAST_COPY.cancel, muted: true, onClick: () => toggleTranslatePage() },
+      })
     },
   })
 
@@ -221,9 +373,26 @@ export async function runFullPageTranslation(): Promise<void> {
   state.status = state.entries.size > 0 ? 'translated' : 'idle'
   emit()
 
+  // H3：收尾角标 —— 完成 ✓ / 失败 !
+  reportProgress(failed > 0 ? 'failed' : 'done', state.progress.done, state.progress.total)
+
   const success = blocks.length - failed
-  if (failed === 0) toast(`已翻译 ${success} 段`, 'success')
-  else toast(`已翻译 ${success} 段，${failed} 段失败`, 'error')
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(1)
+
+  if (failed === 0) {
+    // H2 成功态：主文案带耗时 + 单一动作「撤销」（= 恢复原文）
+    toast(`已翻译 ${success} 段 · ${seconds}s`, {
+      kind: 'success',
+      action: { label: TOAST_COPY.undo, onClick: () => restorePage() },
+    })
+  } else {
+    // G9 Toast：失败态常驻 6s，动作给「重试」（失败批次可就地重跑）
+    toast(`已翻译 ${success} 段 · ${failed} 段失败`, {
+      kind: 'error',
+      persistent: true,
+      action: { label: TOAST_COPY.retry, onClick: () => void retryFailedEntries() },
+    })
+  }
 }
 
 /** 恢复原文（FR-02） */
@@ -238,6 +407,8 @@ export function restorePage(): void {
   state.lastRunFailed = false
   destroyToast()
   emit()
+  // H3：退出对照，工具栏角标一并清空
+  reportProgress('clear', 0, 0)
   toast('已恢复原文', 'success')
 }
 
@@ -249,7 +420,7 @@ export function toggleTranslatePage(): void {
     state.lastRunFailed = false
     state.status = state.entries.size > 0 ? 'translated' : 'idle'
     emit()
-    toast('已取消翻译')
+    toast('已取消')
     return
   }
   if (hasTranslations()) {
@@ -296,7 +467,7 @@ export async function translateSelectionText(
   }
 
   const sourceLang = sourceLangOverride ?? state.settings.sourceLang
-  const targetLang = state.settings.targetLang
+  const targetLang = targetLangFor(model)
 
   const result = await translateText(text, {
     model,
@@ -372,10 +543,108 @@ export async function translateCurrentSelection(): Promise<void> {
 }
 
 /* ------------------------------------------------------------------ */
+/* 复制（H1 右键菜单）                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 写剪贴板。
+ *
+ * 为什么不用 `navigator.clipboard` 一条路走到底：内容脚本里的异步剪贴板 API 要求
+ * 页面处于聚焦态，右键菜单点击后焦点在浏览器 UI 上，异步路径经常被判 `NotAllowedError`。
+ * 所以先试异步 API，失败再退回 `execCommand('copy')` —— 后者只要还在用户手势的调用栈里就能成功。
+ */
+async function writeClipboard(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    /* 落到下面的兜底路径 */
+  }
+
+  try {
+    const holder = document.createElement('textarea')
+    holder.value = text
+    holder.setAttribute('readonly', '')
+    holder.setAttribute('aria-hidden', 'true')
+    holder.className = 'transora-clip-holder'
+    holder.style.cssText =
+      'position:fixed;top:0;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none'
+    document.body.appendChild(holder)
+    holder.select()
+    const ok = document.execCommand('copy')
+    holder.remove()
+    return ok
+  } catch {
+    return false
+  }
+}
+
+/** 取当前选区文本；右键菜单入口会把浏览器算好的 `selectionText` 直接带下来 */
+function currentSelectionText(fallback?: string): string {
+  const fromDom = window.getSelection()?.toString().replace(/\s+/g, ' ').trim() ?? ''
+  const text = fromDom || fallback?.replace(/\s+/g, ' ').trim() || ''
+  return text
+}
+
+/**
+ * H1：复制「原文」。
+ * 原文就是选区本身，不依赖任何翻译状态。
+ */
+export async function copySelectionSource(fallback?: string): Promise<void> {
+  const text = currentSelectionText(fallback)
+  if (!text) {
+    toast('请先选中要复制的文字')
+    return
+  }
+  const ok = await writeClipboard(text)
+  if (ok) toast('已复制原文', 'success')
+  else toast('复制失败，请手动选中复制', 'error')
+}
+
+/**
+ * H1：复制「译文」。
+ *
+ * 优先取本页已有的划词结果（同一次选区在 `selectionRecords` 里能找到就直接用）；
+ * 找不到才真的去翻译一次 —— 否则用户右键「复制译文」时会拿到空字符串，比明确报错更糟。
+ */
+export async function copySelectionTranslation(fallback?: string): Promise<void> {
+  const text = currentSelectionText(fallback)
+  if (!text) {
+    toast('请先选中要复制译文的文字')
+    return
+  }
+
+  const cached = state.selectionRecords.find((record) => record.sourceText === text)
+  if (cached?.translatedText) {
+    const ok = await writeClipboard(cached.translatedText)
+    if (ok) toast('已复制译文', 'success')
+    else toast('复制失败，请手动选中复制', 'error')
+    return
+  }
+
+  if (!activeModel()) {
+    toastNoModel()
+    return
+  }
+
+  // 单实例 Toast：这条会被下面的结果 Toast 原地替换（冷却窗口内只更新文案）
+  toast('正在翻译选中的文字…')
+  const result = await translateSelectionText(text)
+
+  if (!result.ok) {
+    toast(result.error?.message ?? '翻译失败', 'error')
+    return
+  }
+  const ok = await writeClipboard(result.translatedText)
+  if (ok) toast('已复制译文', 'success')
+  else toast('复制失败，请手动选中复制', 'error')
+}
+
+/* ------------------------------------------------------------------ */
 /* 指令分发（Background → Content）                                     */
 /* ------------------------------------------------------------------ */
 
-export function dispatchCommand(command: ContentCommand): void {
+export function dispatchCommand(command: ContentCommand, payload?: { text?: string }): void {
   switch (command) {
     case 'toggle-translate':
       toggleTranslatePage()
@@ -388,6 +657,18 @@ export function dispatchCommand(command: ContentCommand): void {
       break
     case 'toggle-sidebar':
       toggleSidebar()
+      break
+    case 'retry-failed':
+      void retryFailedEntries()
+      break
+    case 'toggle-display-mode':
+      cycleDisplayMode()
+      break
+    case 'copy-source':
+      void copySelectionSource(payload?.text)
+      break
+    case 'copy-translation':
+      void copySelectionTranslation(payload?.text)
       break
   }
 }

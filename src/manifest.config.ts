@@ -76,6 +76,11 @@ export default defineManifest({
       suggested_key: { default: 'Alt+Shift+R' },
       description: '打开 / 关闭侧边栏',
     },
+    /** H1 / F6：切换 对照 / 译文 / 原文 */
+    'toggle-display-mode': {
+      suggested_key: { default: 'Alt+Shift+M' },
+      description: '切换 对照 / 译文 / 原文',
+    },
   },
 
   minimum_chrome_version: '111',
