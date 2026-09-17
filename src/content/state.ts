@@ -7,8 +7,11 @@
 
 import type { ContentCommand } from '@/shared/messages'
 import { STORAGE_KEYS } from '@/shared/constants'
+import type { CompareColumnStatus } from '@/shared/compare'
+import { columnStatusOf } from '@/shared/compare'
 import { getEnabledModels, getSettings, onStorageChanged } from '@/shared/storage'
 import type { ErrorInfo, ModelConfig, Settings } from '@/shared/types'
+import type { BlockCandidate } from './extractor'
 import { applyDisplayMode } from './injector'
 
 export type PageStatus = 'idle' | 'translating' | 'translated'
@@ -40,6 +43,59 @@ export interface SelectionRecord {
 
 export type SidebarTab = 'page' | 'records' | 'compare'
 
+/**
+ * 一列 = 一个模型在本页的译文。
+ *
+ * `translations` / `errors` 与 `CompareState.blocks` **下标对齐**：
+ * 「应用」时按下标把整列回填到页面，不需要任何元素级映射表。
+ */
+export interface CompareColumn {
+  modelId: string
+  modelName: string
+  /** 「供应商」由 endpoint 主机名推断（shared/providers.ts），不是配置字段 */
+  provider: string
+  status: CompareColumnStatus
+  /** 与 blocks 等长；空串 = 该块没有译文 */
+  translations: string[]
+  /** 与 blocks 等长；null = 该块成功 */
+  errors: Array<ErrorInfo | null>
+  /** 已处理块数（成功 + 失败），用于列头进度 */
+  done: number
+  failed: number
+  /** 全列累计耗时 / token（G6 列头元信息；命中等场景可能为 0） */
+  latencyMs: number
+  totalTokens: number
+  /** 命中缓存的块数（元信息在耗时 0 时改显示「命中缓存」） */
+  cacheHits: number
+  /** 整列致命错误（auth / no-model 等：本列剩余批次不再发起） */
+  error: ErrorInfo | null
+}
+
+/** G6 多模型对比的页面级状态（全部是内存态，刷新即清） */
+export interface CompareState {
+  /** 勾选的模型 id（2–3 个，见 MIN/MAX_COMPARE_MODELS） */
+  selectedIds: string[]
+  columns: CompareColumn[]
+  /** 本次对比的块快照；「应用」按 index 回填页面（FR-11 动态补翻属阶段 3，不在此处理） */
+  blocks: BlockCandidate[]
+  /** 当前已应用到页面的模型（G6 图里标橙的那一列） */
+  appliedModelId: string | null
+  status: 'idle' | 'running' | 'done'
+  /** 运行中的会话标记，供「取消对比」与迟到响应丢弃使用 */
+  runId: string | null
+}
+
+export function emptyCompareState(): CompareState {
+  return {
+    selectedIds: [],
+    columns: [],
+    blocks: [],
+    appliedModelId: null,
+    status: 'idle',
+    runId: null,
+  }
+}
+
 export interface PageState {
   status: PageStatus
   settings: Settings
@@ -56,6 +112,8 @@ export interface PageState {
   sidebarTab: SidebarTab
   /** 悬浮按钮是否展开菜单 */
   fabMenuOpen: boolean
+  /** G6 多模型对比（FR-09 / FR-10） */
+  compare: CompareState
 }
 
 export const state: PageState = {
@@ -80,6 +138,7 @@ export const state: PageState = {
   sidebarOpen: false,
   sidebarTab: 'page',
   fabMenuOpen: false,
+  compare: emptyCompareState(),
 }
 
 /* ------------------------------------------------------------------ */
@@ -137,6 +196,20 @@ export function targetLangFor(model: ModelConfig | null): string {
 /** 是否处于「未配置」状态（D-4：四处挂载点共用同一判据） */
 export function isUnconfigured(): boolean {
   return state.models.length === 0
+}
+
+/** 取对比中的某一列（不存在返回 null） */
+export function compareColumnOf(modelId: string): CompareColumn | null {
+  return state.compare.columns.find((column) => column.modelId === modelId) ?? null
+}
+
+/**
+ * 由计数重算列状态。
+ * 状态**不在每次回调里手写**，一律走这个函数 —— 否则「失败块也算已处理」这类口径
+ * 会在三处回填点各写一遍，迟早写歪一个。
+ */
+export function refreshColumnStatus(column: CompareColumn): void {
+  column.status = columnStatusOf(column.done, column.translations.length, column.failed)
 }
 
 /* ------------------------------------------------------------------ */

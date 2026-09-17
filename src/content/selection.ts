@@ -11,7 +11,7 @@
  * 次要入口：右键菜单与快捷键（H1），最终都调用 `showSelectionCardForText`。
  */
 
-import { SELECTION, SIDEBAR_WIDTH, Z } from '@/shared/constants'
+import { SELECTION, Z, sidebarWidthFor } from '@/shared/constants'
 import { isOwnNode } from '@/shared/utils'
 import { registerSelectionShower, toggleFabMenu } from './actions'
 import { state } from './state'
@@ -66,7 +66,8 @@ function readSelection(): SelectionInfo | null {
 
 /** 返回当前可用的水平右边界：侧边栏打开时把它让出去，避免图标落到侧边栏底下 */
 function availableRight(): number {
-  const reserved = state.sidebarOpen ? SIDEBAR_WIDTH : 0
+  // 侧边栏宽度按 Tab 变（对比 Tab 是 728px），避让宽度必须跟着走，否则图标会被压到侧边栏下
+  const reserved = state.sidebarOpen ? sidebarWidthFor(state.sidebarTab) : 0
   return Math.max(160, window.innerWidth - reserved)
 }
 

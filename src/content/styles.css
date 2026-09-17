@@ -291,7 +291,8 @@
 .transora-fab.transora-fab {
   position: fixed;
   top: 50%;
-  right: 18px;
+  /* 距右像素来自 FAB.offset（fab.ts 写入自定义属性），不再与常量分叉 */
+  right: var(--transora-fab-offset, 18px);
   display: block;
   box-sizing: border-box;
   width: 40px;
@@ -540,7 +541,7 @@
   line-height: 1.6;
   color: var(--transora-ink);
   transform: translateX(100%);
-  transition: transform 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+  transition: transform 0.24s cubic-bezier(0.2, 0.7, 0.2, 1), width 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
 
 .transora-sidebar.transora-sidebar--open {
@@ -856,42 +857,351 @@
   cursor: pointer;
 }
 
-.transora-sb-compare {
+/* ---- G6 多模型对比：顶部模型条 + 逐块卡片 ----
+   骨架口径见 ui/sidebar.ts 顶部注释（2026-09-17 裁决，方案 C）。
+   列宽由面板宽度驱动：对比 Tab 下侧边栏 728px → 每列内容宽 ≈ 224px（复现设计稿 G6 比例）。 */
+.transora-cmp {
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 16px;
-  border: 1px dashed var(--transora-hairline-strong);
-  border-radius: 10px;
-  background: var(--transora-warm);
+  gap: 14px;
 }
 
-.transora-sb-compare-title {
+.transora-cmp-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transora-cmp-head-title {
   font-size: 14px;
   font-weight: 600;
 }
 
-.transora-sb-compare-desc,
-.transora-sb-compare-list {
-  margin: 0;
-  padding: 0;
+.transora-cmp-head-desc {
   color: var(--transora-muted);
   font-size: 12px;
-  line-height: 1.8;
+  line-height: 1.7;
 }
 
-.transora-sb-compare-list {
-  padding-left: 16px;
-  list-style: disc;
+/* ---- 勾选态 ---- */
+.transora-cmp-pick-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.transora-sb-compare-pill {
-  align-self: flex-start;
-  padding: 2px 10px;
-  border-radius: 9999px;
-  background: #ffffff;
-  color: var(--transora-accent);
+.transora-cmp-pick-row.transora-cmp-pick-row {
+  all: unset;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.transora-cmp-pick-row.transora-cmp-pick-row:hover {
+  background: var(--transora-warm);
+}
+
+.transora-cmp-pick-row.transora-cmp-pick-row.is-on {
+  border-color: var(--transora-accent);
+  background: var(--transora-warm);
+}
+
+.transora-cmp-pick-box {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  box-sizing: border-box;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--transora-hairline-strong);
+  border-radius: 5px;
+  color: #ffffff;
+}
+
+.transora-cmp-pick-row.is-on .transora-cmp-pick-box {
+  border-color: var(--transora-accent);
+  background: var(--transora-accent);
+}
+
+.transora-cmp-pick-names {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.transora-cmp-pick-name {
+  color: var(--transora-ink);
+  font-size: 13px;
+}
+
+.transora-cmp-pick-sub {
+  overflow: hidden;
+  color: var(--transora-muted);
+  font-family: var(--transora-mono);
   font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transora-cmp-pick-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.transora-cmp-pick-count {
+  color: var(--transora-muted);
+  font-size: 12px;
+}
+
+.transora-cmp-primary.transora-cmp-primary {
+  all: unset;
+  padding: 7px 16px;
+  border-radius: 8px;
+  background: var(--transora-accent);
+  color: #ffffff;
+  font-family: var(--transora-font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.transora-cmp-primary.transora-cmp-primary:disabled {
+  background: var(--transora-hairline-strong);
+  color: #ffffff;
+  cursor: not-allowed;
+}
+
+.transora-cmp-hint {
+  color: var(--transora-faint);
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+/* ---- 顶部模型条（= §A2 的「列头」：名称 / 供应商 / 状态 / 耗时·token / 应用） ---- */
+.transora-cmp-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.transora-cmp-bar-item {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 8px;
+}
+
+.transora-cmp-bar-item.is-applied {
+  border-color: var(--transora-accent);
+}
+
+.transora-cmp-bar-name {
+  overflow: hidden;
+  color: var(--transora-muted);
+  font-family: var(--transora-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transora-cmp-bar-item.is-applied .transora-cmp-bar-name {
+  color: var(--transora-accent);
+}
+
+.transora-cmp-bar-provider {
+  overflow: hidden;
+  color: var(--transora-faint);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transora-cmp-bar-state {
+  color: var(--transora-muted);
+  font-size: 11px;
+}
+
+.transora-cmp-bar-item.is-failed .transora-cmp-bar-state {
+  color: var(--transora-danger);
+}
+
+.transora-cmp-bar-meta {
+  color: var(--transora-faint);
+  font-family: var(--transora-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.transora-cmp-bar-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.transora-cmp-retry.transora-cmp-retry,
+.transora-cmp-apply.transora-cmp-apply {
+  all: unset;
+  padding: 3px 8px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 6px;
+  color: var(--transora-muted);
+  font-family: var(--transora-font);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.transora-cmp-apply.transora-cmp-apply {
+  border-color: var(--transora-accent);
+  background: var(--transora-accent);
+  color: #ffffff;
+}
+
+.transora-cmp-apply.transora-cmp-apply:disabled {
+  border-color: var(--transora-hairline);
+  background: var(--transora-hairline);
+  color: var(--transora-faint);
+  cursor: default;
+}
+
+.transora-cmp-retry.transora-cmp-retry:hover {
+  color: var(--transora-ink);
+}
+
+.transora-cmp-applied {
+  color: var(--transora-muted);
+  font-size: 12px;
+}
+
+/* ---- 逐块卡片（设计稿 G6 画法：原文 + N 列译文 + 各自元信息） ---- */
+.transora-cmp-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.transora-cmp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 10px;
+  background: #ffffff;
+}
+
+.transora-cmp-card-head {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.transora-cmp-card-src {
+  display: -webkit-box;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--transora-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.transora-cmp-card-locate.transora-cmp-card-locate {
+  all: unset;
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 6px;
+  color: var(--transora-faint);
+  font-family: var(--transora-font);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.transora-cmp-card-locate.transora-cmp-card-locate:hover {
+  color: var(--transora-ink);
+}
+
+.transora-cmp-cols {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.transora-cmp-col {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--transora-hairline);
+  border-radius: 8px;
+  background: var(--transora-warm);
+}
+
+.transora-cmp-col.is-applied {
+  border-color: var(--transora-accent);
+}
+
+.transora-cmp-col-name {
+  overflow: hidden;
+  color: var(--transora-muted);
+  font-family: var(--transora-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transora-cmp-col.is-applied .transora-cmp-col-name {
+  color: var(--transora-accent);
+}
+
+.transora-cmp-col-text {
+  color: var(--transora-ink);
+  font-size: 13px;
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.transora-cmp-col-text--error {
+  color: var(--transora-danger);
+  font-size: 12px;
+}
+
+.transora-cmp-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transora-cmp-skeleton > i {
+  display: block;
+  height: 9px;
+  border-radius: 4px;
+  background: #e8e6df;
 }
 
 /* ---- 底部（G11 无底栏；这里只保留「恢复原文」这一页级动作） ---- */

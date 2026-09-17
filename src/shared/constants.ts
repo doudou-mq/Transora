@@ -105,8 +105,11 @@ export const RETRY = {
 /** 历史保留上限（S11） */
 export const HISTORY_LIMIT = 1000
 
-/** 全文对比模型上限（S5） */
+/** 全文对比模型上限（S5 / docs/00 §B 表 Q5：超出置灰并提示） */
 export const MAX_COMPARE_MODELS = 3
+
+/** 全文对比模型下限（I4 场景 C 步骤 02：「勾选 2–3 个模型」—— 单个模型没有可比性） */
+export const MIN_COMPARE_MODELS = 2
 
 /** 翻译缓存条目上限（本地 LRU 式淘汰） */
 export const CACHE_MAX_ENTRIES = 4000
@@ -131,8 +134,25 @@ export const FAB = {
   menuWidth: 224,
 } as const
 
-/** 侧边栏宽度（设计稿 G11） */
+/** 侧边栏宽度（设计稿 G11 画 380；实现取 400 —— 见 2026-09-11「宽度保持 400」决策） */
 export const SIDEBAR_WIDTH = 400
+
+/**
+ * 「多模型对比」Tab 下的侧边栏宽度。
+ *
+ * 为什么按 Tab 变宽：G6 要求「三列并排」，而设计稿把那张卡片画在 **800px** 宽 ——
+ * 按 G6 的间距反推，每列内容宽 = (800 − 2×16 内边距 − 2×12 列间距) ÷ 3 − 2×12 列内边距 = **224px**。
+ * 若强行塞进 400px：每列只剩 90.7px，13px 中文约 7 字/行，对比失去意义。
+ *
+ * 728 = 3×224 + 2×12（列间距） + 2×16（面板内边距），正好复现设计稿比例。
+ * 决策记录：2026-09-17 用户裁决「对比时加宽侧边栏（方案 A）」，仅对比 Tab 生效，其余 Tab 仍 400。
+ */
+export const SIDEBAR_WIDTH_COMPARE = 728
+
+/** 按 Tab 取侧边栏宽度（注入 UI 与划词避让共用同一口径，避免两处各写一个数） */
+export function sidebarWidthFor(tab: string): number {
+  return tab === 'compare' ? SIDEBAR_WIDTH_COMPARE : SIDEBAR_WIDTH
+}
 
 /**
  * G7 页面顶部状态栏几何。

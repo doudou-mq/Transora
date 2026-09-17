@@ -25,6 +25,11 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const DIST = path.join(ROOT, 'dist')
 const OUT = path.join(ROOT, '.verify')
 
+// 上一轮失败留下的截图要清掉：它不写成功路径、也不会自己消失，
+// 留着会让人误以为「这一轮又挂了」。每次开跑先归零，失败时再重新落一张。
+const FAILURE_SHOT = path.join(OUT, 'zz-failure.png')
+if (fs.existsSync(FAILURE_SHOT)) fs.unlinkSync(FAILURE_SHOT)
+
 /* ------------------------------------------------------------------ */
 /* 基础设施                                                            */
 /* ------------------------------------------------------------------ */
@@ -66,6 +71,13 @@ function check(name, passed, detail = '') {
 
 /** 截图前等动效落定，否则会拍到过渡动画的中间帧 */
 const settle = (page, ms = 420) => page.waitForTimeout(ms)
+
+/**
+ * mock 模型给每段译文打的标记。带上 model 名（`【译·e2e-chat】`），
+ * 这样多模型对比才能断言「每一列来自各自的模型」——只判断「有没有译文」是测不出串味的。
+ */
+const translatedBy = (text, model) => (text ?? '').includes(`【译·${model}】`)
+const isTranslated = (text) => (text ?? '').includes('【译')
 
 /* ------------------------------------------------------------------ */
 /* 主流程                                                              */
@@ -156,6 +168,7 @@ try {
   await app.screenshot({ path: path.join(OUT, '02-app-models-empty.png'), fullPage: true })
 
   /* ---------- 写入模型配置 ---------- */
+  // 写两个模型：多模型对比（FR-09）至少需要 2 个，且两个模型的 mock 译文标记不同
   await app.evaluate(async (base) => {
     await chrome.storage.local.set({
       'transora:models': [
@@ -166,6 +179,17 @@ try {
           endpoint: `${base}/v1`,
           apiKey: 'sk-e2e',
           model: 'e2e-chat',
+          temperature: 0.3,
+          maxTokens: 512,
+          enabled: true,
+        },
+        {
+          id: 'e2e-alt',
+          name: 'E2E Alt Model',
+          provider: 'openai-compatible',
+          endpoint: `${base}/v1`,
+          apiKey: 'sk-e2e',
+          model: 'e2e-alt-chat',
           temperature: 0.3,
           maxTokens: 512,
           enabled: true,
@@ -234,7 +258,8 @@ try {
     return {
       count: translations.length,
       sample: translations[0]?.querySelector('.transora-tr-body')?.textContent ?? '',
-      allTranslated: translations.every((t) => (t.textContent || '').includes('【译】')),
+      // 注意：这里跑在浏览器上下文，Node 侧的 translatedBy() 拿不到，必须内联字符串判断
+      allTranslated: translations.every((t) => (t.textContent ?? '').includes('【译·e2e-chat】')),
       innerCount: document.querySelectorAll('.transora-src-inline').length,
       siblingCount: document.querySelectorAll('.transora-src').length,
       codeTranslated: document.querySelectorAll('pre .transora-tr, code .transora-tr').length,
@@ -461,6 +486,157 @@ try {
   await settle(page)
   await page.screenshot({ path: path.join(OUT, '05-sidebar.png') })
 
+  /* ---------- G6 多模型对比（FR-09 / FR-10） ---------- */
+  // 侧边栏此刻是打开着的，直接切到「多模型对比」Tab
+  await page.locator('.transora-sb-tab', { hasText: '多模型对比' }).first().click()
+  await page.waitForSelector('.transora-cmp', { timeout: 5000 })
+  await page.waitForTimeout(420)
+
+  // 对比 Tab 下侧边栏加宽到 728px（2026-09-17 裁决 A：400px 放不下三列可读的对比）
+  const cmpWidth = await page.evaluate(() =>
+    Math.round(document.querySelector('.transora-sidebar').getBoundingClientRect().width),
+  )
+  check('G6 对比 Tab 下侧边栏加宽到 728px（三列并排可读）', cmpWidth === 728, `${cmpWidth}px`)
+
+  const picker = await page.evaluate(() => ({
+    rows: document.querySelectorAll('.transora-cmp-pick-row').length,
+    picked: document.querySelectorAll('.transora-cmp-pick-row.is-on').length,
+    primary: document.querySelector('.transora-cmp-primary')?.textContent?.trim(),
+    primaryDisabled: document.querySelector('.transora-cmp-primary')?.disabled === true,
+    hasCompareTab: [...document.querySelectorAll('.transora-sb-tab')].some(
+      (t) => t.childNodes[0]?.textContent?.trim() === '多模型对比',
+    ),
+  }))
+  check(
+    'G6 首屏为勾选态且已预选（I4 步骤 02）',
+    picker.rows === 2 &&
+      picker.picked === 2 &&
+      picker.primary === '开始对比' &&
+      picker.primaryDisabled === false,
+    JSON.stringify(picker),
+  )
+  await page.screenshot({ path: path.join(OUT, '05-1-compare-picker.png') })
+
+  const requestsBeforeCompare = server.getRequestCount()
+  await page.locator('.transora-cmp-primary').click()
+
+  // 两列都跑到「已完成」才算收尾（列头状态由 columnStatusOf 归并，失败块也算已处理）
+  await page.waitForFunction(
+    () => {
+      const states = [...document.querySelectorAll('.transora-cmp-bar-state')]
+      return states.length === 2 && states.every((n) => n.textContent.trim() === '已完成')
+    },
+    { timeout: 25000 },
+  )
+
+  const cmp = await page.evaluate(() => {
+    const cards = [...document.querySelectorAll('.transora-cmp-card')]
+    const cols = [...(cards[0]?.querySelectorAll('.transora-cmp-col') ?? [])]
+    return {
+      cards: cards.length,
+      colsPerCard: cols.length,
+      names: cols.map((c) => c.querySelector('.transora-cmp-col-name')?.textContent?.trim()),
+      texts: cols.map((c) => c.querySelector('.transora-cmp-col-text')?.textContent?.trim() ?? ''),
+      metas: [...document.querySelectorAll('.transora-cmp-bar-meta')].map((n) => n.textContent.trim()),
+      states: [...document.querySelectorAll('.transora-cmp-bar-state')].map((n) => n.textContent.trim()),
+      providers: [...document.querySelectorAll('.transora-cmp-bar-provider')].map((n) =>
+        n.textContent.trim(),
+      ),
+      appliedNote: document.querySelector('.transora-cmp-applied')?.textContent?.trim() ?? '',
+      colTextNodes: document.querySelectorAll('.transora-cmp-col-text').length,
+      cardSrc: cards[0]?.querySelector('.transora-cmp-card-src')?.textContent?.trim() ?? '',
+    }
+  })
+
+  check(
+    'G6 逐块卡片：原文 + N 列并排（每块都在同一行里对齐）',
+    cmp.cards >= 8 && cmp.colsPerCard === 2 && cmp.cardSrc.length > 0,
+    JSON.stringify({ cards: cmp.cards, cols: cmp.colsPerCard, src: cmp.cardSrc.slice(0, 24) }),
+  )
+  check(
+    'G6 两列译文分别来自各自的模型（列间不串味）',
+    translatedBy(cmp.texts[0], 'e2e-chat') && translatedBy(cmp.texts[1], 'e2e-alt-chat'),
+    JSON.stringify(cmp.texts.map((t) => t.slice(0, 16))),
+  )
+  check(
+    'G6 列头 = 模型名 + 供应商 + 状态 + 耗时·token（A2 / Q6）',
+    cmp.names.length === 2 &&
+      cmp.providers.every((p) => p.length > 0) &&
+      cmp.metas.every((m) => /^\d+\.\d+s · \d+ tok$/.test(m)) &&
+      cmp.states.join(',') === '已完成,已完成',
+    JSON.stringify({ names: cmp.names, metas: cmp.metas, providers: cmp.providers }),
+  )
+  check(
+    'G6 已有译文时该列自动标为「已应用」（页面此刻显示 E2E Mock Model）',
+    cmp.appliedNote.includes('E2E Mock Model'),
+    cmp.appliedNote,
+  )
+  check('对比确实发起了请求（两列各跑一遍本页）', server.getRequestCount() > requestsBeforeCompare)
+
+  /* ---------- FR-10「应用」：换显，不重新请求（D-3） ---------- */
+  const beforeApply = server.getRequestCount()
+  await page.locator('.transora-cmp-bar-item').nth(1).locator('.transora-cmp-apply').click()
+  await page.waitForFunction(
+    () =>
+      [...document.querySelectorAll('.transora-tr-body')].some((b) =>
+        (b.textContent ?? '').includes('【译·e2e-alt-chat】'),
+      ),
+    { timeout: 8000 },
+  )
+  check(
+    'FR-10 应用后页面译文换成所选模型的那一套（D-3 换显）',
+    await page.evaluate(() => {
+      const bodies = [...document.querySelectorAll('.transora-tr-body')]
+      return (
+        bodies.length > 0 &&
+        bodies.every((b) => (b.textContent ?? '').includes('【译·e2e-alt-chat】'))
+      )
+    }),
+  )
+  check(
+    'FR-10 应用不重新请求（译文已缓存，只换显示）',
+    server.getRequestCount() === beforeApply,
+    `${beforeApply} → ${server.getRequestCount()}`,
+  )
+  // 注意：emit() 是 rAF 批量渲染，而页面译文是同步换的 —— 上一个 waitForFunction 返回时
+  // 侧边栏可能还没重绘。这里必须等「已应用」标记真的挪过去，不能立刻读。
+  const appliedMoved = await page
+    .waitForFunction(
+      () => {
+        const marked = [...document.querySelectorAll('.transora-cmp-bar-item.is-applied')]
+        return (
+          marked.length === 1 &&
+          marked[0].querySelector('.transora-cmp-bar-name')?.textContent?.trim() === 'E2E Alt Model'
+        )
+      },
+      { timeout: 5000 },
+    )
+    .then(() => true)
+    .catch(() => false)
+  check(
+    'G6 应用后「已应用」标记转到第二列',
+    appliedMoved,
+    JSON.stringify(
+      await page.evaluate(() =>
+        [...document.querySelectorAll('.transora-cmp-bar-item')].map((n) => ({
+          name: n.querySelector('.transora-cmp-bar-name')?.textContent?.trim(),
+          applied: n.classList.contains('is-applied'),
+          btn: n.querySelector('.transora-cmp-apply')?.textContent?.trim(),
+        })),
+      ),
+    ),
+  )
+  await settle(page)
+  await page.screenshot({ path: path.join(OUT, '05-2-compare-applied.png') })
+
+  // 切回「本页对照」——后面的划词几何断言按 400px 侧边栏计算，必须先恢复宽度
+  await page.locator('.transora-sb-tab', { hasText: '本页对照' }).first().click()
+  await page.waitForTimeout(420)
+  const restoredWidth = await page.evaluate(() =>
+    Math.round(document.querySelector('.transora-sidebar').getBoundingClientRect().width),
+  )
+  check('切回其他 Tab 后侧边栏恢复 400px', restoredWidth === 400, `${restoredWidth}px`)
+
   /* ---------- 划词 ---------- */
   await page.evaluate(() => {
     const target =
@@ -491,11 +667,11 @@ try {
   })
   check(
     '划词内容块返回译文（FR-04）',
-    ((await page.locator('.transora-sel-translated').textContent()) ?? '').includes('【译】'),
+    isTranslated(await page.locator('.transora-sel-translated').textContent()),
   )
   check(
     '划词内容块不含多模型对比（A1 / X6）',
-    (await page.locator('.transora-sel-card .transora-sb-compare').count()) === 0,
+    (await page.locator('.transora-sel-card .transora-cmp').count()) === 0,
   )
 
   /* ---------- G4 / G5 结构与几何 ---------- */
@@ -618,6 +794,22 @@ try {
   await page.waitForTimeout(400)
   await page.hover('[data-transora="fab"]')
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
+
+  // 阶段 2 收口：菜单里的「多模型对比」不再是置灰的「阶段 2 开放」占位项
+  const compareItem = await page.evaluate(() => {
+    const item = [...document.querySelectorAll('[data-transora="fab"] .transora-fab-item')].find(
+      (n) => n.querySelector('.transora-fab-item-label')?.textContent?.trim() === '多模型对比',
+    )
+    return item
+      ? { disabled: item.disabled, hint: item.querySelector('.transora-fab-item-hint')?.textContent?.trim() }
+      : null
+  })
+  check(
+    '菜单「多模型对比」已开放（去掉 disabled / 阶段 2 开放）',
+    compareItem !== null && compareItem.disabled === false && compareItem.hint !== '阶段 2 开放',
+    JSON.stringify(compareItem),
+  )
+
   await page.locator('[data-transora="fab"] .transora-fab-item', { hasText: '恢复原文' }).first().click()
   await page.waitForFunction(() => document.querySelectorAll('.transora-tr').length === 0, {
     timeout: 8000,
@@ -667,7 +859,7 @@ try {
   }))
   check(
     'Popup 渲染模型单选列表与目标语言（D2）',
-    popupShape.models === 1 && popupShape.select === 1 && popupShape.selected === 1,
+    popupShape.models === 2 && popupShape.select === 1 && popupShape.selected === 1,
     JSON.stringify(popupShape),
   )
   check(
@@ -760,6 +952,14 @@ try {
       b.textContent?.trim(),
     ),
     licenseText: document.querySelector('.about-license .about-footnote')?.textContent ?? '',
+    // 更新说明每条的「版本 / 规划中」行 + 版本标签 + 紧随其后的说明文字（行与说明是兄弟节点）
+    changelog: [...document.querySelectorAll('.about-row')]
+      .map((row) => ({
+        label: row.querySelector('.about-row-name')?.textContent?.trim() ?? '',
+        tag: row.querySelector('.about-row-tag')?.textContent?.trim() ?? '',
+        desc: row.nextElementSibling?.textContent?.trim() ?? '',
+      }))
+      .filter((e) => e.tag.length > 0),
     shortcutKeys: [...document.querySelectorAll('.about-row-value')]
       .map((v) => v.textContent?.trim())
       .filter((t) => (t ?? '').includes('Alt + Shift')),
@@ -781,6 +981,17 @@ try {
       about.licenseButtons.join(',') === '查看许可证,使用文档,反馈问题' &&
       about.licenseText.includes('OFL'),
     JSON.stringify({ buttons: about.licenseButtons, license: about.licenseText.slice(0, 40) }),
+  )
+  // 更新说明必须与已上线能力一致：G6 落地后就不能再挂在「规划中」那一条里
+  const planned = about.changelog.find((e) => e.label === '规划中')
+  const current = about.changelog.find((e) => e.tag === '当前版本')
+  check(
+    'F6 更新说明与已上线能力一致（G6 不再列在「规划中」）',
+    Boolean(planned && current) &&
+      !planned.desc.includes('多模型对比') &&
+      planned.desc.includes('F1') &&
+      current.desc.includes('多模型对比'),
+    JSON.stringify(about.changelog),
   )
   check(
     'F6 快捷键一览含 Alt+Shift+M（与 H1 一致）',
@@ -853,7 +1064,7 @@ try {
   check('e2e 流程执行完成', false, String(err).slice(0, 400))
   try {
     const fallback = context.pages().find((p) => p.url().startsWith('http'))
-    if (fallback) await fallback.screenshot({ path: path.join(OUT, 'zz-failure.png') })
+    if (fallback) await fallback.screenshot({ path: FAILURE_SHOT })
   } catch {
     /* 截图失败不掩盖原始错误 */
   }

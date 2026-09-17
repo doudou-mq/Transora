@@ -72,6 +72,9 @@ log.push('png/appicon-blue-{128,256,512}.png');
 
 // extension toolbar icons — the bare mark is the most legible at 16px
 for (const n of [16, 32, 48, 128]) await shoot(SYM_BLUE, n, path.join(EXTICONS, `icon${n}.png`));
+// icon.svg 是上面这组 PNG 的**矢量母版**，刻意与渲染结果放在一起：
+// 它不被 manifest 引用（manifest.icons / action.default_icon 只认位图），
+// 会被原样拷进 dist/icons —— 这点体积是有意为之，别当"孤立资产"删掉。
 fs.writeFileSync(path.join(EXTICONS, 'icon.svg'), SYM_BLUE);
 log.push('extension/public/icons/icon{16,32,48,128}.png + icon.svg');
 

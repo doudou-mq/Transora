@@ -5,10 +5,12 @@
  */
 
 import { GUIDE_DOC_HASH, TOAST_COPY } from '@/shared/copy'
-import { CONCURRENCY } from '@/shared/constants'
+import { isAllFailed, hasAnyFailure } from '@/shared/compare'
+import { CONCURRENCY, MAX_COMPARE_MODELS, MIN_COMPARE_MODELS } from '@/shared/constants'
 import { errorInfoOf } from '@/shared/errors'
 import { langDisplayName } from '@/shared/langs'
 import { MSG, sendToBackground, type ContentCommand } from '@/shared/messages'
+import { providerOf } from '@/shared/providers'
 import type { DisplayMode, ErrorInfo } from '@/shared/types'
 import { uid } from '@/shared/utils'
 import { collectBlocks, sortByViewportFirst, type BlockCandidate } from './extractor'
@@ -25,14 +27,27 @@ import {
 } from './injector'
 import {
   activeModel,
+  compareColumnOf,
   emit,
+  refreshColumnStatus,
   state,
   targetLangFor,
+  type CompareColumn,
   type PageEntry,
   type SelectionRecord,
   type SidebarTab,
 } from './state'
-import { cancelActiveTranslation, isTranslating, translateBlocks, translateText } from './translator'
+import {
+  cancelActiveTranslation,
+  cancelCompare,
+  isComparing,
+  isTranslating,
+  translateBlocks,
+  translateForCompare,
+  translateText,
+  type CompareRunHooks,
+  type CompareTarget,
+} from './translator'
 import type { RunOptions } from './translator'
 import { destroyToast, toast } from './ui/toast'
 
@@ -75,6 +90,7 @@ export function openSidebar(tab: SidebarTab = 'page'): void {
   state.sidebarOpen = true
   state.sidebarTab = tab
   state.fabMenuOpen = false
+  if (tab === 'compare') ensureCompareSelection()
   emit()
 }
 
@@ -90,6 +106,7 @@ export function toggleSidebar(tab?: SidebarTab): void {
 
 export function setSidebarTab(tab: SidebarTab): void {
   state.sidebarTab = tab
+  if (tab === 'compare') ensureCompareSelection()
   emit()
 }
 
@@ -295,6 +312,12 @@ export async function retryFailedEntries(): Promise<void> {
 
 /** 翻译整页（FR-01） */
 export async function runFullPageTranslation(): Promise<void> {
+  // 与多模型对比互斥：两者都要吃满并发槽，同时跑会突破 docs/00 §D-2 的全局上限 3
+  if (isComparing()) {
+    toast('多模型对比进行中，请先取消或等它结束')
+    return
+  }
+
   const options = currentOptions('fullpage')
   if (!options) {
     state.lastError = errorInfoOf('no-model')
@@ -405,6 +428,8 @@ export function restorePage(): void {
   state.progress = { done: 0, total: 0 }
   state.lastError = null
   state.lastRunFailed = false
+  // 页面译文已清空，「已应用」标记随之失效（对比结果本身保留，随时可再应用）
+  state.compare.appliedModelId = null
   destroyToast()
   emit()
   // H3：退出对照，工具栏角标一并清空
@@ -433,6 +458,384 @@ export function toggleTranslatePage(): void {
 /** 点击侧边栏条目时定位到页面上的对应块 */
 export function revealEntry(entry: PageEntry): void {
   if (entry.el.isConnected) focusSourceBlock(entry.el)
+}
+
+/* ------------------------------------------------------------------ */
+/* G6 多模型对比（FR-09 / FR-10）                                       */
+/* ------------------------------------------------------------------ */
+
+/** 勾选 / 取消勾选一个模型；超过上限（Q5：3 个）直接拒绝并提示 */
+export function toggleCompareModel(modelId: string): void {
+  const selected = state.compare.selectedIds
+  const at = selected.indexOf(modelId)
+
+  if (at >= 0) {
+    selected.splice(at, 1)
+  } else {
+    if (selected.length >= MAX_COMPARE_MODELS) {
+      toast(`最多同时对比 ${MAX_COMPARE_MODELS} 个模型`)
+      return
+    }
+    selected.push(modelId)
+  }
+  emit()
+}
+
+/** 默认勾选：当前生效模型打头，再按列表顺序补到上限（用户可再改，不改设置） */
+function defaultCompareSelection(): string[] {
+  const ids: string[] = []
+  const active = activeModel()
+  if (active) ids.push(active.id)
+
+  const ceiling = Math.min(MAX_COMPARE_MODELS, state.models.length)
+  for (const model of state.models) {
+    if (ids.length >= ceiling) break
+    if (!ids.includes(model.id)) ids.push(model.id)
+  }
+  return ids
+}
+
+/** 进入对比 Tab 时若还没勾选，给一份合理预选（否则用户面对空列表不知从哪开始） */
+export function ensureCompareSelection(): void {
+  if (state.compare.selectedIds.length > 0) return
+  if (state.models.length < MIN_COMPARE_MODELS) return
+  state.compare.selectedIds = defaultCompareSelection()
+  emit()
+}
+
+/** 对比整体进度：所有列已处理块数 / 列数 × 块数 */
+function compareProgressOf(columns: readonly CompareColumn[]): { done: number; total: number } {
+  const perColumn = state.compare.blocks.length
+  const done = columns.reduce((sum, column) => sum + column.done, 0)
+  return { done, total: perColumn * columns.length }
+}
+
+/**
+ * 构造对比回调。
+ *
+ * `columns` 的下标 = `translateForCompare` 回调里的 `modelIndex`：
+ * 整轮对比传全部列；单列重试只传 `[column]`，于是同一套回调能服务两种场景。
+ */
+function compareHooks(
+  columns: CompareColumn[],
+  runId: string,
+  toastLabel: string,
+): CompareRunHooks {
+  const alive = (): boolean => state.compare.runId === runId
+
+  return {
+    onResult: (modelIndex, blockIndex, text) => {
+      if (!alive()) return
+      const column = columns[modelIndex]
+      if (!column) return
+      column.translations[blockIndex] = text
+      column.errors[blockIndex] = null
+      column.done += 1
+      refreshColumnStatus(column)
+      emit()
+    },
+
+    onError: (modelIndex, blockIndex, error) => {
+      if (!alive()) return
+      const column = columns[modelIndex]
+      if (!column) return
+      // 同一块可能先后被「漏返回」与致命错误各报一次，只计一次
+      const counted = column.errors[blockIndex] !== null || column.translations[blockIndex] !== ''
+      column.errors[blockIndex] = error
+      if (counted) return
+      column.done += 1
+      column.failed += 1
+      refreshColumnStatus(column)
+      emit()
+    },
+
+    onBatchMeta: (modelIndex, latencyMs, totalTokens, cacheHits) => {
+      if (!alive()) return
+      const column = columns[modelIndex]
+      if (!column) return
+      column.latencyMs += latencyMs
+      column.totalTokens += totalTokens
+      column.cacheHits += cacheHits
+      refreshColumnStatus(column)
+      emit()
+
+      // 进度 Toast 与全文翻译同一套「突发语义」：冷却窗口内只更新文案，不堆叠
+      const { done, total } = compareProgressOf(columns)
+      toast(`${toastLabel} ${done} / ${total} 段`, {
+        action: { label: TOAST_COPY.cancel, muted: true, onClick: () => cancelCompareRun() },
+      })
+    },
+
+    onColumnFatal: (modelIndex, error) => {
+      if (!alive()) return
+      const column = columns[modelIndex]
+      if (!column) return
+      column.error = error
+      // 把该列剩下没填的块一并标失败并计为已处理，否则列状态会永远停在「翻译中」
+      column.errors.forEach((existing, index) => {
+        if (existing !== null || column.translations[index]) return
+        column.errors[index] = error
+        column.done += 1
+        column.failed += 1
+      })
+      refreshColumnStatus(column)
+      emit()
+    },
+  }
+}
+
+function compareBase(): { sourceLang: string; useCache: boolean; type: 'fullpage' } {
+  return {
+    sourceLang: state.settings.sourceLang,
+    useCache: state.settings.cacheEnabled,
+    type: 'fullpage',
+  }
+}
+
+/** 发起对比（FR-09） */
+export async function startCompare(): Promise<void> {
+  if (state.models.length < MIN_COMPARE_MODELS) {
+    toast(`多模型对比至少需要 ${MIN_COMPARE_MODELS} 个已启用的模型`)
+    return
+  }
+  if (isTranslating()) {
+    toast('整页翻译进行中，请先等它结束或取消')
+    return
+  }
+  if (isComparing()) return
+
+  const selectedIds =
+    state.compare.selectedIds.length >= MIN_COMPARE_MODELS
+      ? state.compare.selectedIds.slice(0, MAX_COMPARE_MODELS)
+      : defaultCompareSelection()
+
+  const targets: CompareTarget[] = []
+  for (const id of selectedIds) {
+    const model = state.models.find((m) => m.id === id)
+    if (model) targets.push({ model, targetLang: targetLangFor(model) })
+  }
+  if (targets.length < MIN_COMPARE_MODELS) {
+    toast(`请至少勾选 ${MIN_COMPARE_MODELS} 个模型`)
+    return
+  }
+
+  // 块快照：本轮对比只处理此刻页面上存在的块（FR-11 动态补翻属阶段 3）
+  const blocks = sortByViewportFirst(collectBlocks(document))
+  if (blocks.length === 0) {
+    toast('未找到可对比的内容')
+    return
+  }
+
+  const columns: CompareColumn[] = targets.map(({ model }) => ({
+    modelId: model.id,
+    modelName: model.name,
+    provider: providerOf(model).label,
+    status: 'queued',
+    translations: new Array<string>(blocks.length).fill(''),
+    errors: new Array<ErrorInfo | null>(blocks.length).fill(null),
+    done: 0,
+    failed: 0,
+    latencyMs: 0,
+    totalTokens: 0,
+    cacheHits: 0,
+    error: null,
+  }))
+
+  // 页面此刻已经在用的模型，若也在对比之列 —— 它天然就是「已应用」的那一列（G6 标橙）
+  const current = activeModel()
+  const appliedModelId =
+    hasTranslations() && current && selectedIds.includes(current.id) ? current.id : null
+
+  const runId = uid('cmp')
+  state.compare = {
+    selectedIds: [...selectedIds],
+    columns,
+    blocks,
+    appliedModelId,
+    status: 'running',
+    runId,
+  }
+  state.sidebarOpen = true
+  state.sidebarTab = 'compare'
+  state.fabMenuOpen = false
+  emit()
+
+  const startedAt = Date.now()
+  toast(`正在对比… 0 / ${blocks.length * columns.length} 段`, {
+    action: { label: TOAST_COPY.cancel, muted: true, onClick: () => cancelCompareRun() },
+  })
+
+  await translateForCompare(targets, blocks, compareBase(), compareHooks(columns, runId, '正在对比…'))
+
+  if (state.compare.runId !== runId) return
+
+  columns.forEach(refreshColumnStatus)
+  state.compare.runId = null
+  state.compare.status = 'done'
+  emit()
+
+  const seconds = ((Date.now() - startedAt) / 1000).toFixed(1)
+  const failed = hasAnyFailure(columns)
+
+  if (isAllFailed(columns)) {
+    toast(`对比失败 · ${seconds}s`, {
+      kind: 'error',
+      persistent: true,
+      action: { label: TOAST_COPY.retry, onClick: () => void startCompare() },
+    })
+  } else if (failed) {
+    toast(`对比完成 · 部分列有失败段落 · ${seconds}s`, {
+      kind: 'error',
+      persistent: true,
+      action: { label: TOAST_COPY.retry, onClick: () => void startCompare() },
+    })
+  } else {
+    toast(`对比完成 · ${columns.length} 个模型 × ${blocks.length} 段 · ${seconds}s`, {
+      kind: 'success',
+    })
+  }
+}
+
+/** 取消对比（保留已完成的部分结果，与全文翻译「已完成的批次结果保留」同一口径） */
+export function cancelCompareRun(): void {
+  if (state.compare.status !== 'running') return
+  cancelCompare()
+  state.compare.columns.forEach(refreshColumnStatus)
+  state.compare.runId = null
+  state.compare.status = 'done'
+  emit()
+  toast('已取消对比')
+}
+
+/**
+ * 单列重试。
+ *
+ * 只把该列当成本轮唯一目标重跑：**已成功的块靠缓存免费命中**（`useCache` 开时），
+ * 所以「重跑整列」等价于「只重试失败块」，但代码只有一条路径。
+ * 缓存关闭时会真的重发整列 —— 这是显式用户动作，可接受。
+ */
+export async function retryCompareColumn(modelId: string): Promise<void> {
+  if (state.compare.status === 'running' || isTranslating()) return
+
+  const column = compareColumnOf(modelId)
+  if (!column) return
+  const model = state.models.find((m) => m.id === modelId)
+  if (!model) return
+
+  const blocks = state.compare.blocks
+  if (blocks.length === 0) return
+
+  const size = blocks.length
+  column.translations = new Array<string>(size).fill('')
+  column.errors = new Array<ErrorInfo | null>(size).fill(null)
+  column.done = 0
+  column.failed = 0
+  column.latencyMs = 0
+  column.totalTokens = 0
+  column.cacheHits = 0
+  column.error = null
+  column.status = 'running'
+
+  const runId = uid('cmp')
+  state.compare.runId = runId
+  state.compare.status = 'running'
+  emit()
+
+  toast(`正在重试… 0 / ${size} 段`, {
+    action: { label: TOAST_COPY.cancel, muted: true, onClick: () => cancelCompareRun() },
+  })
+
+  await translateForCompare(
+    [{ model, targetLang: targetLangFor(model) }],
+    blocks,
+    compareBase(),
+    compareHooks([column], runId, '正在重试…'),
+  )
+
+  if (state.compare.runId !== runId) return
+
+  refreshColumnStatus(column)
+  state.compare.runId = null
+  state.compare.status = 'done'
+  emit()
+
+  if (column.failed > 0) {
+    toast(`「${column.modelName}」仍有 ${column.failed} 段失败`, {
+      kind: 'error',
+      persistent: true,
+      action: { label: TOAST_COPY.goSettings, onClick: () => openApp('models') },
+    })
+  } else {
+    toast(`「${column.modelName}」已全部重试成功`, { kind: 'success' })
+  }
+}
+
+/**
+ * FR-10「应用」= 把该模型在本页的译文映射设为当前生效版本（docs/00 §D-3）。
+ * 页面立即按它渲染；**不重新请求、不覆盖缓存**，其余列的结果原样保留随时可切换。
+ */
+export async function applyCompareColumn(modelId: string): Promise<void> {
+  const column = compareColumnOf(modelId)
+  const blocks = state.compare.blocks
+  if (!column || blocks.length === 0) return
+
+  let applied = 0
+  let failedBlocks = 0
+
+  blocks.forEach((block, index) => {
+    const text = column.translations[index]
+    const error = column.errors[index]
+
+    if (text) {
+      const entry = ensureEntry(block)
+      entry.translatedText = text
+      entry.error = null
+      setTranslationText(entry.node, entry.body, text)
+      applied += 1
+      return
+    }
+    if (error) {
+      const entry = ensureEntry(block)
+      entry.error = error
+      setTranslationError(entry.node, entry.body, error, () => {
+        void retryEntry(entry)
+      })
+      failedBlocks += 1
+    }
+  })
+
+  if (applied === 0) {
+    toast(`「${column.modelName}」这一列没有可应用的译文`)
+    return
+  }
+
+  state.compare.appliedModelId = modelId
+  state.status = state.entries.size > 0 ? 'translated' : 'idle'
+  state.lastRunFailed = failedBlocks > 0
+  emit()
+
+  // 「仅原文」模式下属看不见译文，切到「对照」让结果可见 —— 与 D-3「换显」同一意图
+  if (state.settings.displayMode === 'original-only') await setDisplayMode('bilingual')
+
+  const suffix = failedBlocks > 0 ? ` · ${failedBlocks} 段失败` : ''
+  toast(`已应用「${column.modelName}」的译文 · ${applied} 段${suffix}`, {
+    kind: 'success',
+    action: { label: TOAST_COPY.undo, onClick: () => restorePage() },
+  })
+}
+
+/** 回到勾选态（换一批模型再比一次） */
+export function resetCompare(): void {
+  if (state.compare.status === 'running') cancelCompare()
+  state.compare = {
+    ...state.compare,
+    columns: [],
+    blocks: [],
+    appliedModelId: null,
+    status: 'idle',
+    runId: null,
+  }
+  emit()
 }
 
 /* ------------------------------------------------------------------ */

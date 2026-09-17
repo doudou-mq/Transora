@@ -8,6 +8,7 @@
  */
 
 import { groupByBatch, planBatches } from '@/shared/batching'
+import { planCompareTasks } from '@/shared/compare'
 import { CONCURRENCY } from '@/shared/constants'
 import { errorInfoOf } from '@/shared/errors'
 import { MSG, sendToBackground, type TranslateBatchResponse } from '@/shared/messages'
@@ -156,4 +157,142 @@ export async function translateText(
   } catch {
     return { ok: false, error: errorInfoOf('network') }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* G6 多模型对比调度（FR-09）                                            */
+/* ------------------------------------------------------------------ */
+
+/** 参与对比的一个目标：模型 + 它本次使用的目标语言（模型级覆盖 → 全局，由调用方解析） */
+export interface CompareTarget {
+  model: ModelConfig
+  targetLang: string
+}
+
+export interface CompareRunBase {
+  sourceLang: string
+  useCache: boolean
+  type: TranslateType
+}
+
+export interface CompareRunHooks {
+  /** 某列某块成功 */
+  onResult: (modelIndex: number, blockIndex: number, text: string) => void
+  /** 某列某块失败（含「模型漏返回」） */
+  onError: (modelIndex: number, blockIndex: number, error: ErrorInfo) => void
+  /** 某列一批完成：累计耗时 / token / 缓存命中（G6 列头元信息） */
+  onBatchMeta: (
+    modelIndex: number,
+    latencyMs: number,
+    totalTokens: number,
+    cacheHits: number,
+  ) => void
+  /** 某列遇到致命错误（auth / no-model…）：该列剩余批次不再发起，其余列不受影响 */
+  onColumnFatal: (modelIndex: number, error: ErrorInfo) => void
+}
+
+let compareSession: { id: string; canceled: boolean } | null = null
+
+/** 是否有一轮对比在进行（与整页翻译互斥，见 actions.startCompare） */
+export function isComparing(): boolean {
+  return compareSession !== null
+}
+
+/** 取消当前对比：通知 Background 中断在途请求，并丢弃后续任务 */
+export function cancelCompare(): void {
+  if (!compareSession) return
+  const { id } = compareSession
+  compareSession.canceled = true
+  compareSession = null
+  void sendToBackground({ type: MSG.CANCEL, sessionId: id })
+}
+
+/**
+ * 多模型对比：**同一份块列表 × N 个模型**并发翻译。
+ *
+ * 并发口径（docs/00 §D-2「并发上限 3」是**全局**值）：
+ * 不是「每个模型各 3 个槽」（那会是 9 个在途请求），而是**所有列共享 3 个 worker**，
+ * 队列按批次轮转（planCompareTasks），保证各列同时推进而不是一列先跑完。
+ *
+ * 失败隔离：某一列致命失败只影响该列，其余列继续 —— 这是 §A2「每列独立 loading / 失败态」的实现。
+ */
+export async function translateForCompare(
+  targets: readonly CompareTarget[],
+  blocks: readonly BlockCandidate[],
+  base: CompareRunBase,
+  hooks: CompareRunHooks,
+): Promise<void> {
+  if (targets.length === 0 || blocks.length === 0) return
+
+  const session = { id: uid('cmp'), canceled: false }
+  compareSession = session
+
+  // 所有模型共用同一份切分：块列表与文本完全一致，模型差异不影响批次边界
+  const plan = planBatches(blocks.map((block) => block.text))
+  const groups = groupByBatch(plan)
+  const tasks = planCompareTasks(targets.length, plan.batchCount)
+
+  /** 已判定致命失败的列：只跳过它的剩余任务，不牵连其他列 */
+  const fatalColumns = new Set<number>()
+
+  const worker = async (): Promise<void> => {
+    for (;;) {
+      if (session.canceled) return
+      const task = tasks.shift()
+      if (!task) return
+
+      const { modelIndex, batchIndex } = task
+      if (fatalColumns.has(modelIndex)) continue
+
+      const indexes = groups.get(batchIndex)
+      if (!indexes) continue
+
+      const target = targets[modelIndex]
+      const texts = indexes.map((i) => plan.prepared[i])
+
+      let response: TranslateBatchResponse
+      try {
+        response = await requestBatch(session.id, target.model.id, texts, {
+          model: target.model,
+          sourceLang: base.sourceLang,
+          targetLang: target.targetLang,
+          useCache: base.useCache,
+          type: base.type,
+        })
+      } catch {
+        response = { ok: false, error: errorInfoOf('network') }
+      }
+
+      if (session.canceled) return
+
+      if (!response.ok || !response.translations) {
+        const info = response.error ?? errorInfoOf('unknown')
+        indexes.forEach((i) => hooks.onError(modelIndex, i, info))
+        if (FATAL_KINDS.has(info.kind)) {
+          fatalColumns.add(modelIndex)
+          hooks.onColumnFatal(modelIndex, info)
+        }
+      } else {
+        const translations = response.translations
+        indexes.forEach((i, order) => {
+          const text = translations[order]
+          if (text) hooks.onResult(modelIndex, i, text)
+          else hooks.onError(modelIndex, i, errorInfoOf('refused', '本段未返回译文'))
+        })
+        hooks.onBatchMeta(
+          modelIndex,
+          response.latencyMs ?? 0,
+          response.totalTokens ?? 0,
+          response.cacheHits ?? 0,
+        )
+      }
+    }
+  }
+
+  // 注意：tasks 会被 worker 用 shift 消耗，worker 数必须在开工前定好
+  const taskCount = tasks.length
+  const workerCount = Math.max(1, Math.min(CONCURRENCY.FULL_PAGE, taskCount))
+  await Promise.all(Array.from({ length: workerCount }, () => worker()))
+
+  if (compareSession === session) compareSession = null
 }

@@ -14,19 +14,34 @@
  * 因此可以直接当成大纲来读；层级由块自身的标签名（h1–h6）推断。
  */
 
-import { SIDEBAR_WIDTH, Z } from '@/shared/constants'
+import { COMPARE_STATUS_LABEL, formatColumnMeta, type CompareColumnStatus } from '@/shared/compare'
+import { MAX_COMPARE_MODELS, MIN_COMPARE_MODELS, Z, sidebarWidthFor } from '@/shared/constants'
+import { providerOf } from '@/shared/providers'
 import type { DisplayMode } from '@/shared/types'
 import {
+  applyCompareColumn,
+  cancelCompareRun,
   closeSidebar,
   openApp,
-  openSidebar,
+  resetCompare,
   restorePage,
+  retryCompareColumn,
   revealEntry,
   setDisplayMode,
   setSidebarTab,
+  startCompare,
+  toggleCompareModel,
   toggleTranslatePage,
 } from '../actions'
-import { state, type PageEntry, type SelectionRecord, type SidebarTab } from '../state'
+import { focusSourceBlock } from '../injector'
+import {
+  compareColumnOf,
+  state,
+  type CompareColumn,
+  type PageEntry,
+  type SelectionRecord,
+  type SidebarTab,
+} from '../state'
 import { ICONS } from './icons'
 
 const TABS: Array<{ key: SidebarTab; label: string }> = [
@@ -181,24 +196,220 @@ function buildRecordRow(record: SelectionRecord): HTMLElement {
   return row
 }
 
-function buildComparePlaceholder(): HTMLElement {
-  const wrap = div('transora-sb-compare')
-  wrap.appendChild(div('transora-sb-compare-title', '多模型对比'))
+/* ------------------------------------------------------------------ */
+/* G6 多模型对比（骨架：顶部模型应用条 + 逐块卡片）                       */
+/*                                                                     */
+/* 骨架口径（2026-09-17 用户裁决，方案 C）：                              */
+/*   - 上层「模型条」= docs/00 §A2 所说的「列头」：名称 / 供应商 / 状态 /   */
+/*     耗时·token / 应用。应用是**模型级、整页映射**（§D-3）。              */
+/*   - 下层「逐块卡片」= 设计稿 G6 的画法：原文 + N 列译文 + 各自元信息。     */
+/*     逐块渲染才有跨列对齐 —— 若按「每列一整页」渲染，行高不一致会错位。     */
+/* ------------------------------------------------------------------ */
 
-  const desc = div('transora-sb-compare-desc')
-  desc.textContent = '同一页内容交由多个模型分别翻译，在此并排查看，选中任意一列即可应用到页面。'
-  wrap.appendChild(desc)
+/** 一次最多渲染多少块卡片：超长页面下防止每次 emit 重建上万个节点 */
+const COMPARE_MAX_CARDS = 120
 
-  const list = document.createElement('ul')
-  list.className = 'transora-sb-compare-list'
-  for (const line of ['最多同时对比 3 个模型', '各列独立加载 / 失败，互不影响', '「应用」只换显，不重新请求']) {
-    const li = document.createElement('li')
-    li.textContent = line
-    list.appendChild(li)
+/** 一个模型在一个块上的格子（译文 / 失败 / 骨架三态） */
+function buildCompareCell(column: CompareColumn, index: number): HTMLElement {
+  const cell = div('transora-cmp-col')
+  if (state.compare.appliedModelId === column.modelId) cell.classList.add('is-applied')
+  if (column.status === 'failed' || column.status === 'partial') cell.classList.add('is-failed')
+
+  cell.appendChild(div('transora-cmp-col-name', column.modelName))
+
+  const text = column.translations[index]
+  const error = column.errors[index]
+
+  if (text) {
+    cell.appendChild(div('transora-cmp-col-text', text))
+  } else if (error) {
+    cell.appendChild(div('transora-cmp-col-text transora-cmp-col-text--error', error.message))
+  } else {
+    const skeleton = div('transora-cmp-skeleton')
+    for (const width of ['100%', '72%']) {
+      const bar = document.createElement('i')
+      bar.style.width = width
+      skeleton.appendChild(bar)
+    }
+    cell.appendChild(skeleton)
+  }
+
+  return cell
+}
+
+/** 模型条的一项 = G6 的「列头」（§A2：列头可「应用该模型译文到页面」） */
+function buildCompareBarItem(column: CompareColumn): HTMLElement {
+  const item = div('transora-cmp-bar-item')
+  const applied = state.compare.appliedModelId === column.modelId
+  if (applied) item.classList.add('is-applied')
+  if (column.status === 'failed' || column.status === 'partial') item.classList.add('is-failed')
+
+  item.appendChild(div('transora-cmp-bar-name', column.modelName))
+  item.appendChild(div('transora-cmp-bar-provider', column.provider))
+
+  const running = state.compare.status === 'running' && column.status !== 'done'
+  const stateText = running
+    ? `${COMPARE_STATUS_LABEL[column.status as CompareColumnStatus]} ${column.done} / ${column.translations.length}`
+    : COMPARE_STATUS_LABEL[column.status]
+  item.appendChild(div('transora-cmp-bar-state', stateText))
+
+  item.appendChild(
+    div(
+      'transora-cmp-bar-meta',
+      formatColumnMeta(column.latencyMs, column.totalTokens, column.cacheHits),
+    ),
+  )
+
+  const actions = div('transora-cmp-bar-actions')
+
+  const apply = document.createElement('button')
+  apply.type = 'button'
+  apply.className = 'transora-cmp-apply'
+  // 一个块都没成功时不给「应用」——点了也只会得到一句「没有可应用的译文」
+  apply.disabled = applied || column.done - column.failed === 0
+  apply.textContent = applied ? '已应用' : '应用'
+  apply.title = '把这一列的译文应用到页面（换显，不重新请求）'
+  apply.addEventListener('click', () => {
+    void applyCompareColumn(column.modelId)
+  })
+  actions.appendChild(apply)
+
+  if (column.status === 'partial' || column.status === 'failed') {
+    const retry = document.createElement('button')
+    retry.type = 'button'
+    retry.className = 'transora-cmp-retry'
+    retry.textContent = '重试'
+    retry.title = '只重跑这一列失败的段落'
+    retry.addEventListener('click', () => {
+      void retryCompareColumn(column.modelId)
+    })
+    actions.appendChild(retry)
+  }
+
+  item.appendChild(actions)
+  return item
+}
+
+/** 勾选态（I4 场景 C 步骤 02：「在侧边栏「多模型对比」Tab 勾选 2–3 个模型」） */
+function buildComparePicker(): HTMLElement {
+  const wrap = div('transora-cmp')
+
+  const head = div('transora-cmp-head')
+  head.appendChild(div('transora-cmp-head-title', '选择要对比的模型'))
+  head.appendChild(
+    div(
+      'transora-cmp-head-desc',
+      `勾选 ${MIN_COMPARE_MODELS}–${MAX_COMPARE_MODELS} 个模型，各自翻译本页后逐块并排查看；选中任意一列可应用到页面。`,
+    ),
+  )
+  wrap.appendChild(head)
+
+  const list = div('transora-cmp-pick-list')
+  for (const model of state.models) {
+    const on = state.compare.selectedIds.includes(model.id)
+    const row = document.createElement('button')
+    row.type = 'button'
+    row.className = 'transora-cmp-pick-row'
+    if (on) row.classList.add('is-on')
+
+    const box = document.createElement('span')
+    box.className = 'transora-cmp-pick-box'
+    if (on) box.innerHTML = ICONS.check
+    row.appendChild(box)
+
+    const names = div('transora-cmp-pick-names')
+    names.appendChild(div('transora-cmp-pick-name', model.name))
+    names.appendChild(div('transora-cmp-pick-sub', `${providerOf(model).label} · ${model.model}`))
+    row.appendChild(names)
+
+    row.addEventListener('click', () => toggleCompareModel(model.id))
+    list.appendChild(row)
   }
   wrap.appendChild(list)
 
-  wrap.appendChild(div('transora-sb-compare-pill', '阶段 2 开放'))
+  const selected = state.compare.selectedIds.length
+  const foot = div('transora-cmp-pick-foot')
+  foot.appendChild(div('transora-cmp-pick-count', `已选 ${selected} / ${MAX_COMPARE_MODELS}`))
+
+  const primary = document.createElement('button')
+  primary.type = 'button'
+  primary.className = 'transora-cmp-primary'
+  primary.textContent = '开始对比'
+  primary.disabled = selected < MIN_COMPARE_MODELS
+  primary.addEventListener('click', () => {
+    void startCompare()
+  })
+  foot.appendChild(primary)
+  wrap.appendChild(foot)
+
+  if (selected < MIN_COMPARE_MODELS) {
+    wrap.appendChild(div('transora-cmp-hint', `至少勾选 ${MIN_COMPARE_MODELS} 个模型才能开始对比`))
+  }
+
+  return wrap
+}
+
+function buildCompare(): HTMLElement {
+  // 少于 2 个可用模型时连勾选都没有意义 —— 直接给去配置的出口
+  if (state.models.length < MIN_COMPARE_MODELS) {
+    return buildEmpty(
+      `多模型对比需要至少 ${MIN_COMPARE_MODELS} 个已启用的模型。Transora 不内置模型，先在「模型配置」里接入两个 OpenAI 兼容服务。`,
+      '去配置模型',
+      () => openApp('models'),
+    )
+  }
+
+  if (state.compare.columns.length === 0) return buildComparePicker()
+
+  const wrap = div('transora-cmp')
+
+  const bar = div('transora-cmp-bar')
+  state.compare.columns.forEach((column) => bar.appendChild(buildCompareBarItem(column)))
+  wrap.appendChild(bar)
+
+  const applied = state.compare.appliedModelId
+    ? compareColumnOf(state.compare.appliedModelId)
+    : null
+  if (applied) {
+    wrap.appendChild(div('transora-cmp-applied', `页面当前显示：「${applied.modelName}」的译文`))
+  }
+
+  const cards = div('transora-cmp-cards')
+  const total = state.compare.blocks.length
+  const limit = Math.min(total, COMPARE_MAX_CARDS)
+
+  for (let index = 0; index < limit; index += 1) {
+    const block = state.compare.blocks[index]
+    const card = div('transora-cmp-card')
+
+    const head = div('transora-cmp-card-head')
+    const source = div('transora-cmp-card-src', block.text)
+    source.title = block.text
+    head.appendChild(source)
+
+    const locate = document.createElement('button')
+    locate.type = 'button'
+    locate.className = 'transora-cmp-card-locate'
+    locate.textContent = '定位'
+    locate.title = '滚动到页面上的这一块'
+    locate.addEventListener('click', () => focusSourceBlock(block.el))
+    head.appendChild(locate)
+    card.appendChild(head)
+
+    const cols = div('transora-cmp-cols')
+    state.compare.columns.forEach((column) => cols.appendChild(buildCompareCell(column, index)))
+    card.appendChild(cols)
+
+    cards.appendChild(card)
+  }
+  wrap.appendChild(cards)
+
+  if (total > limit) {
+    wrap.appendChild(
+      div('transora-cmp-hint', `仅渲染前 ${limit} 块（共 ${total} 块）；「应用」仍会作用于全部块。`),
+    )
+  }
+
   return wrap
 }
 
@@ -245,7 +456,7 @@ function buildBody(): HTMLElement {
     return body
   }
 
-  body.appendChild(buildComparePlaceholder())
+  body.appendChild(buildCompare())
   return body
 }
 
@@ -257,23 +468,32 @@ function buildBody(): HTMLElement {
 function buildFoot(): HTMLElement {
   const foot = div('transora-sb-foot')
 
-  if (state.sidebarTab === 'compare') {
+  const addButton = (label: string, onClick: () => void): void => {
     const button = document.createElement('button')
     button.type = 'button'
     button.className = 'transora-sb-foot-btn'
-    button.textContent = '了解多模型对比'
-    button.addEventListener('click', () => openApp('models'))
+    button.textContent = label
+    button.addEventListener('click', onClick)
     foot.appendChild(button)
+  }
+
+  if (state.sidebarTab === 'compare') {
+    // 勾选态没有页级动作，底栏留空（`.transora-sb-foot:empty` 自动隐藏）
+    if (state.compare.columns.length === 0) return foot
+
+    if (state.compare.status === 'running') {
+      addButton('取消对比', () => cancelCompareRun())
+    } else {
+      addButton('重新对比', () => {
+        void startCompare()
+      })
+      addButton('换一批模型', () => resetCompare())
+    }
     return foot
   }
 
   if (state.sidebarTab === 'page' && state.entries.size > 0) {
-    const restore = document.createElement('button')
-    restore.type = 'button'
-    restore.className = 'transora-sb-foot-btn'
-    restore.textContent = '恢复原文'
-    restore.addEventListener('click', () => restorePage())
-    foot.appendChild(restore)
+    addButton('恢复原文', () => restorePage())
   }
 
   return foot
@@ -291,13 +511,16 @@ export function mountSidebar(root: HTMLElement): SidebarController {
   const container = document.createElement('aside')
   container.className = 'transora-sidebar'
   container.setAttribute('data-transora', 'sidebar')
-  container.style.width = `${SIDEBAR_WIDTH}px`
   container.style.zIndex = String(Z.sidebar)
-  // 侧边栏宽度以常量为准，同时暴露给 CSS（划词图标要按它避让）
-  document.documentElement.style.setProperty('--transora-sidebar-w', `${SIDEBAR_WIDTH}px`)
   root.appendChild(container)
 
   const render = (): void => {
+    // 宽度**按 Tab 动态**（对比 Tab 需要 728px 才放得下三列，见 constants.sidebarWidthFor），
+    // 同时暴露给 CSS：划词跟随图标要按它避让，宽度一变就得跟着变
+    const width = sidebarWidthFor(state.sidebarTab)
+    container.style.width = `${width}px`
+    document.documentElement.style.setProperty('--transora-sidebar-w', `${width}px`)
+
     container.classList.toggle('transora-sidebar--open', state.sidebarOpen)
 
     // ---- 顶栏（G11） ----

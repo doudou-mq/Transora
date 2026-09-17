@@ -11,7 +11,7 @@
  *  - D-4：未配置模型时，顶部插入引导卡，「翻译当前页面」「多模型对比」置灰。
  */
 
-import { Z } from '@/shared/constants'
+import { FAB, Z } from '@/shared/constants'
 import {
   openApp,
   openGuide,
@@ -83,8 +83,9 @@ function buildMenuItems(): MenuItem[] {
       key: 'compare',
       label: '多模型对比',
       icon: ICONS.compare,
-      disabled: true,
-      hint: '阶段 2 开放',
+      // 未配置模型时置灰（docs/00 §D-4）；已配置则直接打开侧边栏的对比 Tab
+      disabled: unconfigured,
+      hint: '最多 3 个模型',
       sepAfter: true,
       onClick: () => openSidebar('compare' satisfies SidebarTab),
     },
@@ -139,6 +140,10 @@ function buildBadge(): HTMLElement | null {
 }
 
 export function mountFab(root: HTMLElement): FabController {
+  // E2：距右像素的**唯一来源**是 `FAB.offset`，通过自定义属性交给 CSS
+  // （styles.css 写 `right: var(--transora-fab-offset)`）。此前常量与样式分叉过一次，改常量不生效。
+  document.documentElement.style.setProperty('--transora-fab-offset', `${FAB.offset}px`)
+
   const container = document.createElement('div')
   container.className = 'transora-fab'
   container.setAttribute('data-transora', 'fab')

@@ -31,7 +31,7 @@ export interface CostEstimate {
 /**
  * 按待翻译计划估成本。
  * @param plan   内容脚本给出的待翻译块数 / 字数 / 批次数
- * @param models 参与本轮翻译的模型数（阶段 1 恒为 1；阶段 2 对比时才是 2–3）
+ * @param models 参与本轮翻译的模型数（全文翻译恒为 1；多模型对比时为 2–3）
  */
 export function estimateCost(plan: PagePlan, models = 1): CostEstimate {
   const modelCount = Math.max(1, models)
