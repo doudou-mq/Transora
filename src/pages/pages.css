@@ -435,38 +435,413 @@ body {
   box-shadow: 0 0 0 3px rgba(245, 78, 0, 0.2);
 }
 
-/* ================= 翻译历史 ================= */
+/* ================= 通用页头（区块可回写描述与操作区） ================= */
 
-.history-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+.main-head-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.main-head-text {
+  min-width: 0;
+}
+
+.main-head-actions {
+  display: flex;
+  flex: none;
+  gap: 12px;
+  align-items: center;
+  /* 与 26px 的标题基线对齐 */
+  padding-top: 4px;
+}
+
+/* ================= 翻译历史（F1–F5） ================= */
+
+.section--history {
+  /* 历史是「一行一条」的列表，760 的阅读宽度会把每行压得太窄 */
+  max-width: 920px;
+  position: relative;
+}
+
+/* ---------- F1 工具栏：搜索 + 三枚 chip ---------- */
+
+.history-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.history-search {
+  display: flex;
+  flex: 1;
+  min-width: 220px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  height: 36px;
+  background: var(--tr-canvas);
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: var(--tr-radius-block);
+}
+
+.history-search:focus-within {
+  border-color: var(--tr-accent);
+  box-shadow: 0 0 0 3px rgba(245, 78, 0, 0.12);
+}
+
+.history-search-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--tr-ink);
+  font-family: var(--tr-font);
+  font-size: var(--tr-fs-body);
+}
+
+.history-search-input::placeholder {
+  color: var(--tr-muted-soft);
+}
+
+.history-chips {
+  display: flex;
+  flex: none;
+  gap: 8px;
+}
+
+.history-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 4px 0 12px;
+  background: var(--tr-canvas);
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: var(--tr-radius-pill);
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-small);
+  white-space: nowrap;
+}
+
+.history-chip-prefix {
+  color: var(--tr-ink-muted);
+}
+
+.history-chip-select {
+  max-width: 150px;
+  height: 30px;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--tr-ink);
+  font-family: var(--tr-font);
+  font-size: var(--tr-fs-small);
+  cursor: pointer;
+}
+
+/* ---------- F1 列表行 ---------- */
+
+.history-list {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
 }
 
-.history-field {
-  padding: 10px 12px;
+.history-row {
   border: 1px solid var(--tr-hairline);
-  border-radius: var(--tr-radius-block);
+  border-radius: var(--tr-radius-card);
   background: var(--tr-canvas);
+  overflow: hidden;
 }
 
-.history-field-name {
-  margin-bottom: 2px;
+.history-row.is-expanded {
+  border-color: var(--tr-hairline-strong);
+  box-shadow: var(--tr-shadow-card);
+}
+
+.history-row-head {
+  display: block;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--tr-font);
+}
+
+.history-row-head:hover {
+  background: var(--tr-surface-warm);
+}
+
+.history-row-meta {
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-tiny);
+}
+
+.history-row-text {
+  margin-top: 4px;
+  color: var(--tr-ink-body);
+  font-size: var(--tr-fs-body);
+  line-height: 1.6;
+  /* 只露第一段，且最多两行 —— 列表要能一屏扫过去 */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+/* ---------- F3 详情卡 ---------- */
+
+.history-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 12px 12px;
+  padding: 20px;
+  background: var(--tr-surface-warm);
+  border: 1px solid var(--tr-hairline);
+  border-radius: var(--tr-radius-card);
+}
+
+.history-detail-meta {
+  color: var(--tr-ink);
   font-size: var(--tr-fs-small);
   font-weight: 500;
 }
 
-.history-field-desc,
-.history-caps {
-  color: var(--tr-ink-muted);
-  font-size: var(--tr-fs-tiny);
-  line-height: 1.75;
+.history-detail-hairline {
+  height: 1px;
+  background: var(--tr-hairline-strong);
 }
 
-.history-caps {
-  margin: 0;
-  padding-left: 20px;
+.history-detail-label {
+  color: var(--tr-ink-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.history-detail-label.is-accent {
+  color: var(--tr-accent);
+}
+
+.history-detail-text {
+  color: var(--tr-ink-body);
+  font-size: var(--tr-fs-body);
+  line-height: 1.8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.history-detail-text.is-translated {
+  color: var(--tr-ink);
+}
+
+.history-detail-text.is-error {
+  color: var(--tr-danger);
+}
+
+.history-detail-note {
+  color: var(--tr-danger);
+  font-size: var(--tr-fs-tiny);
+}
+
+.history-detail-url {
+  color: var(--tr-ink-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.history-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: center;
+}
+
+.history-action {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tr-ink);
+  font-family: var(--tr-font);
   font-size: var(--tr-fs-small);
+  cursor: pointer;
+}
+
+.history-action:hover:not(:disabled) {
+  color: var(--tr-accent);
+}
+
+.history-action:disabled {
+  color: var(--tr-ink-faint);
+  cursor: not-allowed;
+}
+
+.history-action.is-danger {
+  color: var(--tr-danger);
+}
+
+.history-action.is-danger:hover:not(:disabled) {
+  color: var(--tr-accent-hover);
+}
+
+/* ---------- F2 空态 / 筛选无结果 ---------- */
+
+.history-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 72px 24px;
+  text-align: center;
+}
+
+.history-empty-title {
+  color: var(--tr-ink);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.history-empty-desc {
+  margin: 0;
+  max-width: 46ch;
+  color: var(--tr-ink-muted);
+  font-size: var(--tr-fs-small);
+  line-height: 1.8;
+  white-space: pre-line;
+}
+
+/* ---------- F5 导出菜单 ---------- */
+
+/* 导出菜单定位在**区块**的右上角（正好落在页头「导出」按钮下方）。
+   所以这一层故意不设 position —— 一旦它是 relative，就会变成菜单的包含块，
+   菜单会跑到区块底部去。 */
+.history-overlay-host {
+  display: contents;
+}
+
+.history-export-menu {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 420px;
+  padding: 8px;
+  background: var(--tr-canvas);
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: var(--tr-radius-card);
+  box-shadow: var(--tr-shadow-card);
+}
+
+.history-export-option {
+  padding: 12px;
+  border: 0;
+  border-radius: var(--tr-radius-block);
+  background: transparent;
+  color: var(--tr-ink-body);
+  font-family: var(--tr-font);
+  font-size: var(--tr-fs-small);
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-export-option:hover {
+  background: var(--tr-surface-warm);
+  color: var(--tr-ink);
+}
+
+/* ---------- F4 清空二次确认 ---------- */
+
+.history-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(38, 37, 30, 0.36);
+}
+
+.history-modal-wrap {
+  display: contents;
+}
+
+.history-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 480px;
+  padding: 24px;
+  background: var(--tr-canvas);
+  border: 1px solid var(--tr-hairline-strong);
+  border-radius: 12px;
+  box-shadow: var(--tr-shadow-card);
+}
+
+.history-modal-title {
+  margin: 0;
+  font-size: var(--tr-fs-title);
+  font-weight: 600;
+}
+
+.history-modal-desc {
+  margin: 0;
+  color: var(--tr-ink-body);
+  font-size: var(--tr-fs-small);
+  line-height: 1.8;
+}
+
+.history-modal-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--tr-error);
+  border-radius: var(--tr-radius-block);
+  background: var(--tr-error-bg);
+  color: var(--tr-error);
+  font-size: var(--tr-fs-small);
+  font-weight: 500;
+}
+
+.history-modal-warning::before {
+  content: '';
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1.6px solid var(--tr-error);
+  border-radius: 50%;
+  /* 感叹号用一条竖线近似，避免再引一个图标字体 */
+  background: linear-gradient(var(--tr-error), var(--tr-error)) center / 1.6px 6px no-repeat;
+}
+
+.history-modal-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+/* F4「确认清空」按设计稿 `.btn-danger` 是**填充式**。
+   注意：这里没有改共享的 `.tr-btn--danger`（它是描边式，模型卡在用），
+   否则会顺手改掉另一个页面的样子 —— 两者的口径差异记在交付说明里。 */
+.tr-btn--danger-solid {
+  background: var(--tr-error);
+  border-color: var(--tr-error);
+  color: #fff;
+}
+
+.tr-btn--danger-solid:hover:not(:disabled) {
+  background: #b3224a;
+  border-color: #b3224a;
 }
 
 /* ================= 关于 ================= */

@@ -26,9 +26,17 @@ import { ICONS } from './icons'
 
 const COMPLETED_BADGE_MS = 3500
 
-/** S4：hover ≥120ms 才展开，移出 250ms 后收起 */
-const HOVER_OPEN_DELAY_MS = 120
+/** 移出 250ms 后收起（S3 / S4） */
 const HOVER_CLOSE_DELAY_MS = 250
+
+/**
+ * 两段式悬停的时序（S3 / S4）：
+ *   第一段「露出」= CSS transition，在 `FAB.revealMs` 内完成位移 + 透明度 + 缩放；
+ *   第二段「展开菜单」必须**等第一段播完**再开始 —— 否则菜单会从半隐藏的位置滑出来，
+ *   两段动画糊在一起，看不出「先露出、再展开」的层次。
+ * 防误触语义不变：180ms 比原阈值 120ms 更长。
+ */
+const HOVER_OPEN_DELAY_MS = FAB.revealMs
 
 /** 键盘导航高亮：用 class 而非 DOM focus，避免 render 重建时焦点丢失 */
 const ACTIVE_CLASS = 'is-active'
@@ -140,9 +148,12 @@ function buildBadge(): HTMLElement | null {
 }
 
 export function mountFab(root: HTMLElement): FabController {
-  // E2：距右像素的**唯一来源**是 `FAB.offset`，通过自定义属性交给 CSS
-  // （styles.css 写 `right: var(--transora-fab-offset)`）。此前常量与样式分叉过一次，改常量不生效。
+  // E2：注入 UI 的几何数字**唯一来源**是 `FAB`，一律通过自定义属性交给 CSS
+  // （styles.css 写 `right: var(--transora-fab-offset)` / `translateX(var(--transora-fab-peek))`）。
+  // 此前常量与样式分叉过一次，改常量不生效 —— 新增数字也必须走这条路。
   document.documentElement.style.setProperty('--transora-fab-offset', `${FAB.offset}px`)
+  document.documentElement.style.setProperty('--transora-fab-peek', `${FAB.peek}px`)
+  document.documentElement.style.setProperty('--transora-fab-reveal-ms', `${FAB.revealMs}ms`)
 
   const container = document.createElement('div')
   container.className = 'transora-fab'
@@ -180,8 +191,15 @@ export function mountFab(root: HTMLElement): FabController {
   root.appendChild(container)
 
   const render = (): void => {
+    // 角标必须先算：它决定按钮要不要强制保持露出（见下）
+    const badge = buildBadge()
+
     container.classList.toggle('transora-fab--hidden', state.settings.fabHidden)
     container.classList.toggle('transora-fab--open', state.fabMenuOpen)
+    // 有角标（翻译进行中 / 刚完成）时保持完整露出：隐藏式静止态只露一半，
+    // 而角标画在按钮右上角 —— 半隐藏时整枚角标都落在视口外，
+    // H3 的「进行中 / 完成 / 失败」三态就无从可见，角标规范会形同虚设。
+    container.classList.toggle('transora-fab--badged', Boolean(badge))
 
     const translating = state.status === 'translating'
 
@@ -199,7 +217,6 @@ export function mountFab(root: HTMLElement): FabController {
       if (state.fabMenuOpen) toggleFabMenu(false)
     })
 
-    const badge = buildBadge()
     if (badge) button.appendChild(badge)
 
     const menu = document.createElement('div')

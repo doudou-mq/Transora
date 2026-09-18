@@ -20,6 +20,22 @@ export interface AppContext {
   reload: () => Promise<void>
 }
 
+/**
+ * 区块与页头的接口。
+ *
+ * 为什么需要它：设计稿的页头不只是「标题 + 一句固定描述」——
+ * 翻译历史页要把**实时条数**写进副标题，还要把「导出 / 清空」放在标题右侧（F1）。
+ * 这两件事都依赖区块自己的数据，所以由区块回写，而不是让外壳去猜。
+ *
+ * 只有真的有动态页头需求的区块才用它，其余区块照旧忽略这个参数。
+ */
+export interface SectionContext {
+  /** 回写标题下方的描述行 */
+  setHeaderDesc: (desc: string) => void
+  /** 把操作区挂到标题右侧（每次调用整体替换） */
+  setHeaderActions: (nodes: HTMLElement[]) => void
+}
+
 let current: AppContext = {
   models: [],
   settings: {

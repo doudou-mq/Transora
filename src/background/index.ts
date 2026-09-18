@@ -9,15 +9,20 @@
  */
 
 import { TransoraError, fromUnknown } from '@/shared/errors'
+import { addRecord } from '@/shared/history-db'
 import { chatCompletion } from '@/shared/llm'
 import {
   MSG,
   getActiveTabId,
   isTransoraMessage,
   sendToTab,
+  type ApplyHistoryRequest,
+  type ApplyHistoryResponse,
   type CancelRequest,
   type ContentCommand,
   type GetStateResponse,
+  type HistoryAddRequest,
+  type HistoryAddResponse,
   type OpenAppPageRequest,
   type PatchSettingsRequest,
   type TestConnectionRequest,
@@ -270,7 +275,75 @@ async function handleTestConnection(
   }
 }
 
-async function route(message: { type: string } & Record<string, unknown>) {
+/**
+ * 落库一条翻译历史（FR-05）。
+ *
+ * 只做「收下 + 补上不可信的字段 + 写库」，不做内容加工 ——
+ * 摘要、搜索、导出这些都在扩展页侧完成（那里能直接用同一份 IndexedDB）。
+ */
+async function handleHistoryAdd(
+  request: HistoryAddRequest,
+  sender: chrome.runtime.MessageSender,
+): Promise<HistoryAddResponse> {
+  try {
+    const settings = await getSettings()
+    const saved = await addRecord(
+      {
+        modelId: request.modelId,
+        modelName: request.modelName,
+        sourceText: request.sourceText,
+        translatedText: request.translatedText,
+        error: request.error,
+        type: request.sourceType,
+        // 来源页以发送方标签页为准，不信消息内容（同「URL 自拼」的安全边界）
+        pageUrl: sender.tab?.url ?? '',
+        sourceLang: request.sourceLang,
+        targetLang: request.targetLang,
+        // 时间戳由 Background 打：页面改不了记录时间，超限剪裁的顺序才可信
+        timestamp: Date.now(),
+        latencyMs: request.latencyMs,
+        totalTokens: request.totalTokens,
+      },
+      settings.historyLimit,
+    )
+    return { ok: true, id: saved.id }
+  } catch (err) {
+    // 历史写入失败绝不能影响翻译主链路（翻译已经完成了，用户不该因为记不上账而看到报错）
+    console.warn('[Transora] 翻译历史写入失败', err)
+    return { ok: false }
+  }
+}
+
+/**
+ * F3 行内操作「应用到页面」：找到记录来源页那个标签页，把这段译文套回去。
+ *
+ * 找不到来源页**不算错误** —— 那只是最正常的降解路径（用户关掉页面了），
+ * 所以返回 `reason: 'tab-not-open'` 让界面给一句人话，而不是抛一个「失败」。
+ */
+async function handleApplyHistory(request: ApplyHistoryRequest): Promise<ApplyHistoryResponse> {
+  if (!request.pageUrl) return { ok: false, reason: 'tab-not-open' }
+
+  const tabs = await chrome.tabs.query({ url: request.pageUrl })
+  const target = tabs.find((tab) => tab.id !== undefined)
+  if (target?.id === undefined) return { ok: false, reason: 'tab-not-open' }
+
+  try {
+    await chrome.tabs.sendMessage(target.id, {
+      type: MSG.CMD,
+      command: 'apply-history',
+      payload: { sourceText: request.sourceText, translatedText: request.translatedText },
+    })
+    return { ok: true }
+  } catch {
+    // 来源页打开了但内容脚本不在（例如 chrome:// 或刚刷新还没注入）
+    return { ok: false, reason: 'send-failed' }
+  }
+}
+
+async function route(
+  message: { type: string } & Record<string, unknown>,
+  sender: chrome.runtime.MessageSender,
+) {
   switch (message.type) {
     case MSG.TRANSLATE_BATCH:
       return handleTranslateBatch(message as unknown as TranslateBatchRequest)
@@ -305,6 +378,12 @@ async function route(message: { type: string } & Record<string, unknown>) {
       return { ok: true }
     }
 
+    case MSG.HISTORY_ADD:
+      return handleHistoryAdd(message as unknown as HistoryAddRequest, sender)
+
+    case MSG.APPLY_HISTORY:
+      return handleApplyHistory(message as unknown as ApplyHistoryRequest)
+
     case MSG.OPEN_APP_PAGE: {
       const { hash } = message as unknown as OpenAppPageRequest
       openAppPage(hash)
@@ -316,10 +395,10 @@ async function route(message: { type: string } & Record<string, unknown>) {
   }
 }
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!isTransoraMessage(message)) return undefined
 
-  route(message as { type: string } & Record<string, unknown>)
+  route(message as { type: string } & Record<string, unknown>, sender)
     .then(sendResponse)
     .catch((err: unknown) => {
       const error = err instanceof TransoraError ? err.info : fromUnknown(err).info

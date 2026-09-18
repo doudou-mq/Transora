@@ -8,10 +8,11 @@ import { GUIDE_DOC_HASH, TOAST_COPY } from '@/shared/copy'
 import { isAllFailed, hasAnyFailure } from '@/shared/compare'
 import { CONCURRENCY, MAX_COMPARE_MODELS, MIN_COMPARE_MODELS } from '@/shared/constants'
 import { errorInfoOf } from '@/shared/errors'
+import { splitSegments } from '@/shared/history'
 import { langDisplayName } from '@/shared/langs'
 import { MSG, sendToBackground, type ContentCommand } from '@/shared/messages'
 import { providerOf } from '@/shared/providers'
-import type { DisplayMode, ErrorInfo } from '@/shared/types'
+import type { DisplayMode, ErrorInfo, ModelConfig, TranslateType } from '@/shared/types'
 import { uid } from '@/shared/utils'
 import { collectBlocks, sortByViewportFirst, type BlockCandidate } from './extractor'
 import {
@@ -174,6 +175,131 @@ function reportProgress(
   total: number,
 ): void {
   void sendToBackground({ type: MSG.TRANSLATE_PROGRESS, phase, done, total })
+}
+
+/* ------------------------------------------------------------------ */
+/* 翻译历史（FR-05）                                                    */
+/* ------------------------------------------------------------------ */
+
+/** 拼接整页原文/译文用的分隔符；`splitSegments()` 就是按它切回来的 */
+const HISTORY_JOIN = '\n\n'
+
+interface HistoryDraft {
+  model: ModelConfig
+  sourceText: string
+  translatedText: string | null
+  error: string | null
+  sourceType: TranslateType
+  sourceLang: string
+  targetLang: string
+  latencyMs?: number
+  totalTokens?: number
+}
+
+/**
+ * 上报一条历史记录。
+ *
+ * 这里只「把这次翻译报上去」，落库由 Background 完成 —— IndexedDB 按源隔离，
+ * 内容脚本开库会落在**宿主页面的源**上，换个网站就读不到（见 shared/history-db.ts）。
+ *
+ * 不 await、不提示、不重试：历史是记账，记账失败不该打断已经完成的翻译。
+ *
+ * 记账点只有三处：整页翻译收尾、划词翻译完成、对比收尾（每列一条）。
+ * **单块重试不记账** —— 那是对同一次翻译的修补，逐块记会在历史里刷出一片同页记录。
+ */
+function recordHistory(draft: HistoryDraft): void {
+  if (draft.sourceText.trim() === '') return
+  void sendToBackground({
+    type: MSG.HISTORY_ADD,
+    modelId: draft.model.id,
+    modelName: draft.model.name,
+    sourceText: draft.sourceText,
+    translatedText: draft.translatedText,
+    error: draft.error,
+    sourceType: draft.sourceType,
+    sourceLang: draft.sourceLang,
+    targetLang: draft.targetLang,
+    latencyMs: draft.latencyMs,
+    totalTokens: draft.totalTokens,
+  })
+}
+
+/**
+ * 整页结果 → 一条记录（设计稿 F3 头行的「12 段 · 1,840 字」就是这么来的）。
+ *
+ * 部分失败也照记：成功段的译文按原顺序拼起来，失败段数写进 `error`。
+ * 完全不记的话，用户「翻了一半」的那次会凭空消失。
+ */
+function historyDraftOfBlocks(
+  blocks: readonly BlockCandidate[],
+  model: ModelConfig,
+  sourceLang: string,
+  targetLang: string,
+  failed: number,
+  latencyMs?: number,
+  totalTokens?: number,
+): HistoryDraft {
+  const sourceText = blocks.map((b) => b.text).join(HISTORY_JOIN)
+
+  const parts: string[] = []
+  for (const block of blocks) {
+    const text = state.entries.get(block.el)?.translatedText
+    if (text) parts.push(text)
+  }
+
+  return {
+    model,
+    sourceText,
+    translatedText: parts.length > 0 ? parts.join(HISTORY_JOIN) : null,
+    error: failed > 0 ? `其中 ${failed} 段翻译失败` : null,
+    sourceType: 'fullpage',
+    sourceLang,
+    targetLang,
+    latencyMs,
+    totalTokens,
+  }
+}
+
+/**
+ * 对比结果 → **每个模型一条**历史。
+ *
+ * 为什么不是「整轮一条」：FR-05 记的是「每次翻译的模型 + 译文」。对比时每个模型确实
+ * 各做了一次整页翻译（各自计费），合并成一条就分不清谁翻了什么，
+ * 按模型筛选与导出都会失效。
+ */
+function recordCompareHistory(
+  columns: readonly CompareColumn[],
+  blocks: readonly BlockCandidate[],
+  sourceLang: string,
+): void {
+  const sourceText = blocks.map((b) => b.text).join(HISTORY_JOIN)
+  if (sourceText.trim() === '') return
+
+  for (const column of columns) {
+    // 整列一段都没成功 → 不记空记录（与「应用」按钮的禁用判据同一口径）
+    if (column.done - column.failed === 0) continue
+
+    const parts: string[] = []
+    for (const text of column.translations) {
+      if (text) parts.push(text)
+    }
+    if (parts.length === 0) continue
+
+    const model = state.models.find((m) => m.id === column.modelId)
+    if (!model) continue
+
+    recordHistory({
+      model,
+      sourceText,
+      translatedText: parts.join(HISTORY_JOIN),
+      error: column.failed > 0 ? `其中 ${column.failed} 段翻译失败` : null,
+      sourceType: 'fullpage',
+      sourceLang,
+      targetLang: targetLangFor(model),
+      latencyMs: column.latencyMs,
+      totalTokens: column.totalTokens,
+    })
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -359,6 +485,9 @@ export async function runFullPageTranslation(): Promise<void> {
 
   let failed = 0
   const startedAt = Date.now()
+  // 历史（FR-05）要的整页用量：逐批累加耗时与 token
+  let latencyMs = 0
+  let totalTokens = 0
 
   await translateBlocks(blocks, options, {
     onResult: (block, text) => {
@@ -386,6 +515,10 @@ export async function runFullPageTranslation(): Promise<void> {
         action: { label: TOAST_COPY.cancel, muted: true, onClick: () => toggleTranslatePage() },
       })
     },
+    onBatchMeta: (batchLatency, batchTokens) => {
+      latencyMs += batchLatency
+      totalTokens += batchTokens
+    },
   })
 
   const canceled = run.canceled
@@ -398,6 +531,19 @@ export async function runFullPageTranslation(): Promise<void> {
 
   // H3：收尾角标 —— 完成 ✓ / 失败 !
   reportProgress(failed > 0 ? 'failed' : 'done', state.progress.done, state.progress.total)
+
+  // FR-05：整页一次翻译 = 一条历史（含部分失败）
+  recordHistory(
+    historyDraftOfBlocks(
+      blocks,
+      options.model,
+      options.sourceLang,
+      options.targetLang,
+      failed,
+      latencyMs,
+      totalTokens,
+    ),
+  )
 
   const success = blocks.length - failed
   const seconds = ((Date.now() - startedAt) / 1000).toFixed(1)
@@ -674,6 +820,9 @@ export async function startCompare(): Promise<void> {
   state.compare.status = 'done'
   emit()
 
+  // FR-05：对比的每个模型各记一条
+  recordCompareHistory(columns, blocks, compareBase().sourceLang)
+
   const seconds = ((Date.now() - startedAt) / 1000).toFixed(1)
   const failed = hasAnyFailure(columns)
 
@@ -824,6 +973,58 @@ export async function applyCompareColumn(modelId: string): Promise<void> {
   })
 }
 
+/**
+ * F3 行内操作「应用到页面」：把某条历史记录的译文套回**它自己的来源页**。
+ *
+ * 与 FR-10「应用」（换显已缓存的对比结果）不是一回事：这里的数据来自 IndexedDB，
+ * 页面可能已经刷新过、块顺序可能变了，所以按**原文文本**配对，而不是按下标硬塞。
+ *
+ * 配不上的情况一律给一句人话，不静默失败：
+ *  - 页面还没有译文块 → 先翻译本页；
+ *  - 原文/译文段数不等 → 这条记录本身有失败段，无法精确对照（冻死的数据模型里没有对齐信息）。
+ */
+export async function applyHistoryRecord(
+  sourceText: string,
+  translatedText: string,
+): Promise<void> {
+  if (state.entries.size === 0) {
+    toast('该页面还没有译文，先翻译本页再应用')
+    return
+  }
+
+  const sources = splitSegments(sourceText)
+  const translated = splitSegments(translatedText)
+  if (sources.length === 0 || sources.length !== translated.length) {
+    toast('这条记录有失败的段落，无法精确对照应用到页面')
+    return
+  }
+
+  const pairs = new Map<string, string>()
+  sources.forEach((source, index) => pairs.set(source, translated[index]))
+
+  let applied = 0
+  state.entries.forEach((entry) => {
+    const hit = pairs.get(entry.sourceText)
+    if (hit === undefined) return
+    entry.translatedText = hit
+    entry.error = null
+    setTranslationText(entry.node, entry.body, hit)
+    applied += 1
+  })
+
+  if (applied === 0) {
+    toast('这条记录与当前页面没有可对应的段落')
+    return
+  }
+
+  state.status = 'translated'
+  state.lastRunFailed = false
+  emit()
+
+  if (state.settings.displayMode === 'original-only') await setDisplayMode('bilingual')
+  toast(`已应用 ${applied} 段历史译文`, { kind: 'success' })
+}
+
 /** 回到勾选态（换一批模型再比一次） */
 export function resetCompare(): void {
   if (state.compare.status === 'running') cancelCompare()
@@ -895,6 +1096,21 @@ export async function translateSelectionText(
     state.selectionRecords.length = MAX_SELECTION_RECORDS
   }
   emit()
+
+  // FR-05：划词也计入**全局历史**。
+  // 注意与侧边栏「划词记录」区分（X4）：那个只属于当前页、刷新即散；
+  // 这里落的是 IndexedDB，跨页面可查可筛可导出。
+  recordHistory({
+    model,
+    sourceText: text,
+    translatedText: result.ok ? result.text : null,
+    error: result.ok ? null : result.error.message,
+    sourceType: 'selection',
+    sourceLang,
+    targetLang,
+    latencyMs: result.ok ? result.latencyMs : undefined,
+    totalTokens: result.ok ? result.totalTokens : undefined,
+  })
 
   if (result.ok) {
     return {
@@ -1047,7 +1263,10 @@ export async function copySelectionTranslation(fallback?: string): Promise<void>
 /* 指令分发（Background → Content）                                     */
 /* ------------------------------------------------------------------ */
 
-export function dispatchCommand(command: ContentCommand, payload?: { text?: string }): void {
+export function dispatchCommand(
+  command: ContentCommand,
+  payload?: { text?: string; sourceText?: string; translatedText?: string },
+): void {
   switch (command) {
     case 'toggle-translate':
       toggleTranslatePage()
@@ -1072,6 +1291,9 @@ export function dispatchCommand(command: ContentCommand, payload?: { text?: stri
       break
     case 'copy-translation':
       void copySelectionTranslation(payload?.text)
+      break
+    case 'apply-history':
+      void applyHistoryRecord(payload?.sourceText ?? '', payload?.translatedText ?? '')
       break
   }
 }

@@ -73,6 +73,20 @@ function check(name, passed, detail = '') {
 const settle = (page, ms = 420) => page.waitForTimeout(ms)
 
 /**
+ * 悬停「隐藏式」悬浮按钮。
+ *
+ * 为什么不能用 `page.hover()`：静止态按钮只露一半，**元素中心落在视口右缘之外**，
+ * Playwright 的可操作性检查（要求命中点可见）会判失败。所以这里显式把指针移到
+ * 「视口内那 20px 可见条带」上 —— 与真实用户的鼠标走的是同一条路径。
+ */
+async function hoverFab(page) {
+  const box = await page.locator('[data-transora="fab"] .transora-fab-btn').boundingBox()
+  const viewport = page.viewportSize()
+  if (!box || !viewport) throw new Error('拿不到悬浮按钮的位置')
+  await page.mouse.move(viewport.width - 8, Math.round(box.y + box.height / 2))
+}
+
+/**
  * mock 模型给每段译文打的标记。带上 model 名（`【译·e2e-chat】`），
  * 这样多模型对比才能断言「每一列来自各自的模型」——只判断「有没有译文」是测不出串味的。
  */
@@ -138,7 +152,103 @@ try {
   await page.waitForSelector('[data-transora="fab"] .transora-fab-btn', { timeout: 8000 })
   check('悬浮按钮挂载', true)
 
-  await page.hover('[data-transora="fab"]')
+  /* ---------- G10 隐藏式悬浮按钮：静止半隐藏 → 两段式悬停 → 回位 ---------- */
+  // 指针先离开右侧再量几何：静止态几何只有在**没有 :hover** 时才是静止值
+  await page.mouse.move(400, 300)
+  await settle(page, 320)
+
+  const fabRest = await page.evaluate(() => {
+    const btn = document.querySelector('[data-transora="fab"] .transora-fab-btn')
+    if (!btn) return null
+    const box = btn.getBoundingClientRect()
+    const cs = getComputedStyle(btn)
+    return {
+      // 尺寸取 computedStyle：它不受 transform 影响（悬停时会被放大到 1.04）
+      w: parseFloat(cs.width),
+      h: parseFloat(cs.height),
+      radius: cs.borderRadius,
+      opacity: Number(cs.opacity),
+      inside: Math.round(document.documentElement.clientWidth - box.left),
+      outside: Math.round(box.right - document.documentElement.clientWidth),
+    }
+  })
+  check(
+    'G10 隐藏式静止态：贴住视口右缘、只露一半（视口内 20px / 视口外 20px）+ opacity .5',
+    Boolean(fabRest) &&
+      fabRest.opacity === 0.5 &&
+      fabRest.w === 40 &&
+      fabRest.h === 40 &&
+      fabRest.radius === '12px' &&
+      fabRest.inside === 20 &&
+      fabRest.outside === 20,
+    JSON.stringify(fabRest),
+  )
+  await page.screenshot({ path: path.join(OUT, '01a-fab-hidden-rest.png') })
+
+  await hoverFab(page)
+  // 两段式时序：露出是 180ms，菜单必须等它播完才出来 —— 110ms 时菜单还不能开
+  await page.waitForTimeout(110)
+  const midReveal = await page.evaluate(() => {
+    const el = document.querySelector('[data-transora="fab"]')
+    const btn = el?.querySelector('.transora-fab-btn')
+    return {
+      open: el ? el.classList.contains('transora-fab--open') : null,
+      opacity: btn ? Number(getComputedStyle(btn).opacity) : null,
+    }
+  })
+  check(
+    'G10 悬停第一段（露出）期间菜单尚未展开（两段式时序）',
+    midReveal.open === false,
+    JSON.stringify(midReveal),
+  )
+
+  const openStartedAt = Date.now()
+  await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
+  const openDelay = Date.now() - openStartedAt + 110
+  check(
+    'G10 菜单在露出动画（180ms）之后才展开',
+    openDelay >= 170,
+    `悬停后约 ${openDelay}ms 菜单才出现`,
+  )
+
+  await settle(page, 320)
+  const fabHover = await page.evaluate(() => {
+    const btn = document.querySelector('[data-transora="fab"] .transora-fab-btn')
+    const box = btn.getBoundingClientRect()
+    const cs = getComputedStyle(btn)
+    return {
+      opacity: Number(cs.opacity),
+      gapToEdge: Math.round(document.documentElement.clientWidth - box.right),
+      visualW: Math.round(box.width),
+      visualRadius: cs.borderRadius,
+    }
+  })
+  check(
+    'G10 悬停露出后：完整贴边（右缘对齐视口）+ opacity 1 + scale 1.04',
+    fabHover.opacity === 1 && fabHover.gapToEdge === 0 && Math.abs(fabHover.visualW - 41.6) <= 1.5,
+    JSON.stringify(fabHover),
+  )
+
+  // 移出后回位：250ms 收菜单 + 滑回半隐藏
+  await page.mouse.move(400, 300)
+  await page.waitForTimeout(600)
+  const fabBack = await page.evaluate(() => {
+    const el = document.querySelector('[data-transora="fab"]')
+    const btn = el.querySelector('.transora-fab-btn')
+    const box = btn.getBoundingClientRect()
+    return {
+      open: el.classList.contains('transora-fab--open'),
+      opacity: Number(getComputedStyle(btn).opacity),
+      inside: Math.round(document.documentElement.clientWidth - box.left),
+    }
+  })
+  check(
+    'G10 移出后收起菜单并滑回半隐藏静止态',
+    fabBack.open === false && fabBack.opacity === 0.5 && fabBack.inside === 20,
+    JSON.stringify(fabBack),
+  )
+
+  await hoverFab(page)
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
   check(
     '未配置时菜单内出现引导卡（D-4）',
@@ -217,12 +327,40 @@ try {
   /* ---------- 全文块级双语对照 ---------- */
   await page.reload({ waitUntil: 'load' })
   await page.waitForSelector('[data-transora="fab"] .transora-fab-btn', { timeout: 10000 })
-  await page.hover('[data-transora="fab"]')
+  await hoverFab(page)
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
   await page
     .locator('[data-transora="fab"] .transora-fab-item', { hasText: '翻译当前页面' })
     .first()
     .click()
+
+  // 翻译进行中 / 刚完成时 FAB 带 H3 角标：此时必须保持完整露出
+  // （角标画在按钮右上角，半隐藏时整枚角标都在视口外）
+  await page.waitForFunction(
+    () => document.querySelector('[data-transora="fab"]')?.classList.contains('transora-fab--badged'),
+    { timeout: 10000 },
+  )
+  // 指针移开且越过 250ms 收起延迟后再量：此刻若仍完整贴边，就只可能是角标在兜住露出态
+  await page.mouse.move(200, 700)
+  await page.waitForTimeout(400)
+  const fabBadged = await page.evaluate(() => {
+    const el = document.querySelector('[data-transora="fab"]')
+    const btn = el.querySelector('.transora-fab-btn')
+    const box = btn.getBoundingClientRect()
+    return {
+      badged: el.classList.contains('transora-fab--badged'),
+      open: el.classList.contains('transora-fab--open'),
+      opacity: Number(getComputedStyle(btn).opacity),
+      gapToEdge: Math.round(document.documentElement.clientWidth - box.right),
+      badgeCount: el.querySelectorAll('.transora-fab-badge').length,
+    }
+  })
+  check(
+    'G10 带角标时强制完整露出（半隐藏会让 H3 角标落到视口外）',
+    fabBadged.badged && fabBadged.badgeCount === 1 && !fabBadged.open &&
+      fabBadged.opacity === 1 && fabBadged.gapToEdge === 0,
+    JSON.stringify(fabBadged),
+  )
 
   await page.waitForSelector('.transora-tr .transora-tr-body', { timeout: 20000 })
   await page.waitForFunction(
@@ -443,7 +581,7 @@ try {
   )
 
   /* ---------- 侧边栏 ---------- */
-  await page.hover('[data-transora="fab"]')
+  await hoverFab(page)
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
   await page
     .locator('[data-transora="fab"] .transora-fab-item', { hasText: '打开侧边栏' })
@@ -792,7 +930,7 @@ try {
   // 悬浮按钮严格贴右（不让位），侧边栏打开时整体隐藏；先关掉侧边栏才能继续操作 FAB
   await page.click('.transora-sb-close')
   await page.waitForTimeout(400)
-  await page.hover('[data-transora="fab"]')
+  await hoverFab(page)
   await page.waitForSelector('[data-transora="fab"].transora-fab--open', { timeout: 5000 })
 
   // 阶段 2 收口：菜单里的「多模型对比」不再是置灰的「阶段 2 开放」占位项
@@ -966,7 +1104,7 @@ try {
   }))
   check(
     'F6 关于页含「已是最新版本」与产品版本口径（A6）',
-    about.versionPill.includes('已是最新版本') && about.versionPill.includes('产品版本 v0.1.0'),
+    about.versionPill.includes('已是最新版本') && about.versionPill.includes('产品版本 v0.2.0'),
     about.versionPill,
   )
   check(
@@ -982,15 +1120,22 @@ try {
       about.licenseText.includes('OFL'),
     JSON.stringify({ buttons: about.licenseButtons, license: about.licenseText.slice(0, 40) }),
   )
-  // 更新说明必须与已上线能力一致：G6 落地后就不能再挂在「规划中」那一条里
+  // 更新说明必须与已上线能力一致：阶段 2 已交付，G6 与 F1–F5 都不能再挂在「规划中」那一条里，
+  // 而「规划中」的阶段标签必须是阶段 3（SPA 动态补翻的归属，见 docs/05）。
   const planned = about.changelog.find((e) => e.label === '规划中')
   const current = about.changelog.find((e) => e.tag === '当前版本')
+  const stage1 = about.changelog.find((e) => e.label === 'v0.1.0 · 2026-09-10')
   check(
-    'F6 更新说明与已上线能力一致（G6 不再列在「规划中」）',
-    Boolean(planned && current) &&
+    'F6 更新说明与已上线能力一致（G6 / F1–F5 不列在「规划中」，且归属阶段 3）',
+    Boolean(planned && current && stage1) &&
+      planned.tag === '阶段 3' &&
       !planned.desc.includes('多模型对比') &&
-      planned.desc.includes('F1') &&
-      current.desc.includes('多模型对比'),
+      !planned.desc.includes('F1') &&
+      planned.desc.includes('SPA 动态补翻') &&
+      current.tag === '当前版本' &&
+      current.desc.includes('多模型对比') &&
+      current.desc.includes('翻译历史') &&
+      stage1.tag === '阶段 1',
     JSON.stringify(about.changelog),
   )
   check(
@@ -1015,7 +1160,7 @@ try {
   )
   check(
     'B10 导航底部为产品版本 + Manifest V3',
-    nav.foot.includes('v0.1.0 · Manifest V3'),
+    nav.foot.includes('v0.2.0 · Manifest V3'),
     nav.foot,
   )
 
@@ -1054,9 +1199,244 @@ try {
     JSON.stringify(editor.buttons),
   )
 
+  /* ---------- F1–F5 翻译历史（FR-05 / FR-06 / FR-15） ---------- */
+  // 此时本轮已经跑过：整页翻译、划词翻译、多模型对比 → 三条写入路径都该留下记录
   await app.goto(`chrome-extension://${extensionId}/src/pages/index.html#history`, { waitUntil: 'load' })
-  await app.waitForSelector('.history-fields', { timeout: 8000 })
-  check('翻译历史页给出阶段 2 口径说明', true)
+  await app.waitForSelector('.history-row, .history-empty', { timeout: 8000 })
+  await app.waitForTimeout(300)
+
+  const historyHead = await app.evaluate(() => ({
+    title: document.querySelector('.main-title')?.textContent?.trim(),
+    desc: document.querySelector('.main-desc')?.textContent?.trim(),
+    headButtons: [...document.querySelectorAll('.main-head-actions .tr-btn')].map((b) =>
+      b.textContent?.trim(),
+    ),
+    rows: document.querySelectorAll('.history-row').length,
+    metas: [...document.querySelectorAll('.history-row-meta')].map((n) => n.textContent.trim()),
+    searchPlaceholder: document.querySelector('.history-search-input')?.placeholder,
+    chips: [...document.querySelectorAll('.history-chip-select')].map((s) => ({
+      label: s.getAttribute('aria-label'),
+      value: s.value,
+      options: [...s.options].map((o) => o.textContent?.trim() ?? ''),
+    })),
+  }))
+
+  check(
+    'F1 页头 = 实时条数副标题 + 导出 / 清空（设计稿 F1）',
+    historyHead.title === '翻译历史' &&
+      /^共 \d+ 条记录 · 仅存储在本机（上限 \d+ 条，超出自动清理最早的记录）$/.test(
+        historyHead.desc ?? '',
+      ) &&
+      historyHead.headButtons.join(',') === '导出,清空',
+    JSON.stringify({ desc: historyHead.desc, buttons: historyHead.headButtons }),
+  )
+  check(
+    'F1 工具栏 = 搜索框 + 模型 / 类型 / 时间三枚 chip',
+    historyHead.searchPlaceholder === '搜索原文或译文…' &&
+      historyHead.chips.map((c) => c.label).join(',') === '模型,类型,时间' &&
+      historyHead.chips[0].options[0] === '全部' &&
+      historyHead.chips[1].options[0] === '全部' &&
+      historyHead.chips[2].options[0] === '全部时间' &&
+      historyHead.chips[2].value === '7d',
+    JSON.stringify(historyHead.chips),
+  )
+  check(
+    'F1 页面翻译已经落库（行数 ≥ 3，元信息为「模型 · 类型 · 时间」）',
+    historyHead.rows >= 3 && historyHead.metas.every((m) => (m.match(/ · /g) ?? []).length >= 2),
+    JSON.stringify({ rows: historyHead.rows, metas: historyHead.metas.slice(0, 5) }),
+  )
+  check(
+    'FR-05 记录同时来自整页与划词两个入口（两条写入路径都通）',
+    historyHead.chips[1].options.includes('整页翻译') &&
+      historyHead.chips[1].options.includes('划词翻译'),
+    JSON.stringify(historyHead.chips[1].options),
+  )
+
+  /* ---------- F3 详情展开 ---------- */
+  await app.locator('.history-row-head').first().click()
+  await app.waitForSelector('.history-detail', { timeout: 5000 })
+  const detail = await app.evaluate(() => ({
+    meta: document.querySelector('.history-detail-meta')?.textContent?.trim() ?? '',
+    labels: [...document.querySelectorAll('.history-detail-label')].map((n) => n.textContent?.trim()),
+    source: document.querySelector('.history-detail-text')?.textContent?.trim() ?? '',
+    url: document.querySelector('.history-detail-url')?.textContent?.trim() ?? '',
+    actions: [...document.querySelectorAll('.history-action')].map((b) => b.textContent?.trim()),
+  }))
+  check(
+    'F3 详情卡 = 规模摘要 + 原文 / 译文 · 模型 + 来源 + 4 个行内操作',
+    /段 · [\d,]+ 字/.test(detail.meta) &&
+      detail.labels[0] === '原文' &&
+      (detail.labels[1] ?? '').startsWith('译文 · ') &&
+      detail.source.length > 0 &&
+      detail.url.includes('127.0.0.1:8787') &&
+      detail.actions.join(',') === '复制译文,应用到页面,打开来源,删除记录',
+    JSON.stringify(detail),
+  )
+  await app.screenshot({ path: path.join(OUT, '12-history-detail.png'), fullPage: true })
+
+  /* ---------- FR-06 搜索 ---------- */
+  await app.fill('.history-search-input', 'zzz-一定搜不到-zzz')
+  await app.waitForTimeout(200)
+  const noMatch = await app.evaluate(() => ({
+    rows: document.querySelectorAll('.history-row').length,
+    title: document.querySelector('.history-empty-title')?.textContent?.trim(),
+  }))
+  check(
+    'FR-06 搜不到时给「没有符合条件的记录」，不与「尚无记录」混淆',
+    noMatch.rows === 0 && noMatch.title === '没有符合条件的记录',
+    JSON.stringify(noMatch),
+  )
+
+  await app.fill('.history-search-input', '【译·')
+  await app.waitForTimeout(200)
+  const searched = await app.evaluate(() => document.querySelectorAll('.history-row').length)
+  check('FR-06 关键词能命中译文（不只搜原文）', searched >= 1, String(searched))
+
+  await app.fill('.history-search-input', '')
+  await app.waitForTimeout(200)
+
+  /* ---------- FR-06 按类型筛选 ---------- */
+  await app.selectOption('.history-chip-select >> nth=1', 'selection')
+  await app.waitForTimeout(200)
+  const filtered = await app.evaluate(() => ({
+    rows: document.querySelectorAll('.history-row').length,
+    metas: [...document.querySelectorAll('.history-row-meta')].map((n) => n.textContent.trim()),
+    desc: document.querySelector('.main-desc')?.textContent ?? '',
+  }))
+  check(
+    'FR-06 类型筛选生效，且副标题显示「已筛选」（设计稿 F3）',
+    filtered.rows >= 1 &&
+      filtered.metas.every((m) => m.includes('划词翻译')) &&
+      filtered.desc.includes('已筛选「模型：全部 / 类型：划词翻译 / 近 7 天」'),
+    JSON.stringify(filtered),
+  )
+  await app.selectOption('.history-chip-select >> nth=1', 'all')
+  await app.waitForTimeout(200)
+
+  /* ---------- F5 导出 ---------- */
+  // 拦下 Blob 与真实下载：断言导出的是**真内容**，而不只是「菜单弹出来了」
+  await app.evaluate(() => {
+    window.__transoraExport = null
+    const original = URL.createObjectURL
+    URL.createObjectURL = (blob) => {
+      window.__transoraExport = blob
+      return original.call(URL, blob)
+    }
+    HTMLAnchorElement.prototype.click = function () {}
+  })
+
+  await app.locator('.main-head-actions .tr-btn', { hasText: '导出' }).first().click()
+  await app.waitForSelector('.history-export-menu', { timeout: 5000 })
+  const exportOptions = await app.evaluate(() =>
+    [...document.querySelectorAll('.history-export-option')].map((n) => n.textContent?.trim()),
+  )
+  check(
+    'F5 导出菜单两项，文案照设计稿',
+    exportOptions.join(',') ===
+      '导出为 JSON（含完整字段与时间戳）,导出为 Markdown（便于粘贴到笔记）',
+    JSON.stringify(exportOptions),
+  )
+
+  await app.locator('.history-export-option').first().click()
+  const exportedJson = await app.evaluate(async () => {
+    const blob = window.__transoraExport
+    return blob ? await blob.text() : null
+  })
+  let parsedExport = null
+  try {
+    parsedExport = JSON.parse(exportedJson)
+  } catch {
+    /* 解析失败下面那条断言会报到 */
+  }
+  check(
+    'FR-15 导出 JSON 内容完整（字段 + 人读时间 + 条数）',
+    parsedExport?.app === 'Transora' &&
+      parsedExport?.count >= 3 &&
+      parsedExport?.records?.length === parsedExport.count &&
+      typeof parsedExport?.records[0]?.timestamp === 'number' &&
+      typeof parsedExport?.records[0]?.time === 'string' &&
+      typeof parsedExport?.records[0]?.modelName === 'string',
+    exportedJson ? exportedJson.slice(0, 140) : 'null',
+  )
+
+  /* ---------- F4 清空二次确认 ---------- */
+  await app.locator('.main-head-actions .tr-btn', { hasText: '清空' }).first().click()
+  await app.waitForSelector('.history-modal', { timeout: 5000 })
+  const modal = await app.evaluate(() => ({
+    title: document.querySelector('.history-modal-title')?.textContent?.trim(),
+    desc: document.querySelector('.history-modal-desc')?.textContent?.trim(),
+    warning: document.querySelector('.history-modal-warning')?.textContent?.trim(),
+    buttons: [...document.querySelectorAll('.history-modal-actions .tr-btn')].map((b) =>
+      b.textContent?.trim(),
+    ),
+    width: Math.round(document.querySelector('.history-modal').getBoundingClientRect().width),
+  }))
+  check(
+    'F4 清空 = 遮罩 + 480 宽模态 + 不可撤销警示 + 二次确认文案',
+    /^清空全部 \d+ 条翻译记录？$/.test(modal.title ?? '') &&
+      (modal.desc ?? '').includes('清空后无法恢复') &&
+      modal.warning === '此操作不可撤销' &&
+      modal.buttons.join(',') === '确认清空,取消' &&
+      modal.width === 480,
+    JSON.stringify(modal),
+  )
+  await app.screenshot({ path: path.join(OUT, '13-history-clear-menace.png') })
+
+  // 取消必须什么都不删 —— 二次确认的意义就在这里
+  await app.locator('.history-modal-actions .tr-btn', { hasText: '取消' }).click()
+  await app.waitForTimeout(250)
+  const afterCancel = await app.evaluate(() => ({
+    rows: document.querySelectorAll('.history-row').length,
+    modal: Boolean(document.querySelector('.history-modal')),
+  }))
+  check(
+    'F4 点「取消」不删任何记录',
+    afterCancel.rows >= 3 && afterCancel.modal === false,
+    JSON.stringify(afterCancel),
+  )
+  await app.screenshot({ path: path.join(OUT, '14-history.png'), fullPage: true })
+
+  /* ---------- F2 空态（真的清空后） ---------- */
+  await app.locator('.main-head-actions .tr-btn', { hasText: '清空' }).first().click()
+  await app.waitForSelector('.history-modal', { timeout: 5000 })
+  await app.locator('.history-modal-actions .tr-btn', { hasText: '确认清空' }).click()
+  await app.waitForSelector('.history-empty', { timeout: 8000 })
+
+  const cleared = await app.evaluate(() => ({
+    rows: document.querySelectorAll('.history-row').length,
+    title: document.querySelector('.history-empty-title')?.textContent?.trim(),
+    descText: document.querySelector('.history-empty-desc')?.textContent ?? '',
+    desc: document.querySelector('.main-desc')?.textContent ?? '',
+    headButtonsDisabled: [...document.querySelectorAll('.main-head-actions .tr-btn')].map(
+      (b) => b.disabled,
+    ),
+  }))
+
+  // 直接读 IndexedDB 复核：界面说空了，库里也必须真的空（而不是只把列表藏起来）
+  const dbCount = await app.evaluate(
+    () =>
+      new Promise((resolve) => {
+        const open = indexedDB.open('transora-history')
+        open.onerror = () => resolve(-1)
+        open.onsuccess = () => {
+          const count = open.result.transaction('records', 'readonly').objectStore('records').count()
+          count.onsuccess = () => resolve(count.result)
+          count.onerror = () => resolve(-1)
+        }
+      }),
+  )
+
+  check(
+    'F2 清空后回到空态，且 IndexedDB 里确实是 0 条',
+    cleared.rows === 0 &&
+      cleared.title === '还没有翻译记录' &&
+      cleared.descText.includes('不会同步到任何服务器') &&
+      cleared.desc.includes('共 0 条记录') &&
+      cleared.headButtonsDisabled.every(Boolean) &&
+      dbCount === 0,
+    JSON.stringify({ ...cleared, dbCount }),
+  )
+  await app.screenshot({ path: path.join(OUT, '15-history-empty.png'), fullPage: true })
 
   /* ---------- 无未捕获错误 ---------- */
   check('测试期间无未捕获页面错误', pageErrors.length === 0, pageErrors.join(' | ').slice(0, 240))

@@ -28,6 +28,12 @@ export interface RunHooks {
   onResult: (block: BlockCandidate, text: string) => void
   onError: (block: BlockCandidate, error: ErrorInfo) => void
   onProgress: (done: number, total: number) => void
+  /**
+   * 每批成功后的用量回执（可选）。
+   * 只给「要记账的人」用 —— 目前是翻译历史（FR-05）要累计耗时与 token，
+   * 界面上并不展示整页的实时用量，所以不放进 onProgress 里强制所有人接。
+   */
+  onBatchMeta?: (latencyMs: number, totalTokens: number, cacheHits: number) => void
 }
 
 /** 会让后续批次全部无意义的错误：直接终止整轮 */
@@ -117,6 +123,11 @@ export async function translateBlocks(
           if (text) hooks.onResult(blocks[i], text)
           else hooks.onError(blocks[i], errorInfoOf('refused', '本段未返回译文'))
         })
+        hooks.onBatchMeta?.(
+          response.latencyMs ?? 0,
+          response.totalTokens ?? 0,
+          response.cacheHits ?? 0,
+        )
       }
 
       done += indexes.length

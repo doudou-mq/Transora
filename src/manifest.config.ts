@@ -15,7 +15,7 @@ export default defineManifest({
   name: 'Transora',
   short_name: 'Transora',
   description: '基于大模型的网页翻译：整页双语对照、划词翻译、多模型对比。不内置模型，由你接入自己的 OpenAI 兼容服务。',
-  version: '0.1.0',
+  version: '0.2.0',
 
   icons: {
     16: 'icons/icon16.png',

@@ -2,8 +2,12 @@
  * 全局常量 —— 取值口径全部来自 docs/00-确认方案.md，改这里等于改口径，务必回写文档。
  */
 
-/** 产品版本（对应 manifest.version，见 docs/00 §C3）。设计稿版本是另一回事，勿混用。 */
-export const PRODUCT_VERSION = '0.1.0'
+/**
+ * 产品版本（对应 manifest.version，见 docs/00 §C3）。设计稿版本是另一回事，勿混用。
+ * 阶段 1 交付物 = 0.1.0，阶段 2 交付物 = 0.2.0（docs/00 §四 · C3①）。
+ * 改这里必须同步：manifest.config.ts 的 version、package.json 的 version、e2e 关于页/导航断言。
+ */
+export const PRODUCT_VERSION = '0.2.0'
 
 /** 注入宿主页面的所有 class / 属性统一前缀 */
 export const NS = 'transora'
@@ -127,11 +131,28 @@ export const STORAGE_KEYS = {
   cache: 'transora:cache',
 } as const
 
-/** 悬浮按钮尺寸（设计稿 G10） */
+/**
+ * 悬浮按钮（设计稿 G10 / S3）。
+ *
+ * **「隐藏式」静止态**：紧贴视口右缘、宽度只露一半（`peek` 落在视口外），opacity .5；
+ * 悬停后第一段 180ms 向左滑入 `peek` 像素完整露出、opacity→1、scale→1.04，
+ * 第二段再由控制器展开菜单（见 `fab.ts` 的 `HOVER_OPEN_DELAY_MS`）。
+ *
+ * 为什么露出后回到 `offset: 0`（完全贴边）而不是留 18px 内缩：
+ *   露出动画是**向右平移**（静止）↔ **归位**（悬停）。若露出后仍留 18px 内缩，
+ *   指针停在可见那一半上时，按钮左移后指针就落到按钮**右侧之外** → `:hover` 立刻失效
+ *   → 自动弹回 → 指针又命中 → 无限抖动。回到贴边后按钮只向左生长，
+ *   指针始终在按钮内，抖动从几何上不可能发生，也不需要任何「透明命中区」。
+ */
 export const FAB = {
   size: 40,
-  offset: 18,
+  /** 露出后距视口右缘：0 = 紧贴右缘 */
+  offset: 0,
   menuWidth: 224,
+  /** 静止态被视口裁掉的部分 = 宽度的一半（「只露出一半」） */
+  peek: 20,
+  /** 露出 / 回位的过渡时长（ms）；菜单在其**结束后**才展开（两段式） */
+  revealMs: 180,
 } as const
 
 /** 侧边栏宽度（设计稿 G11 画 380；实现取 400 —— 见 2026-09-11「宽度保持 400」决策） */

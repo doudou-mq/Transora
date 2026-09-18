@@ -291,13 +291,30 @@
 .transora-fab.transora-fab {
   position: fixed;
   top: 50%;
-  /* 距右像素来自 FAB.offset（fab.ts 写入自定义属性），不再与常量分叉 */
-  right: var(--transora-fab-offset, 18px);
+  /* 几何数字来自 FAB.*（fab.ts 写入自定义属性），不再与常量分叉 */
+  right: var(--transora-fab-offset, 0px);
   display: block;
   box-sizing: border-box;
   width: 40px;
   height: 40px;
-  transform: translateY(-50%);
+  /* 「隐藏式」静止态：向右平移 peek，宽度的一半落到视口外（G10）。
+     故意用**平移**而不是在按钮内部裁剪：命中区跟着按钮一起走，指针始终落在按钮上。
+     若改成「左侧加内缩」的露出方式，指针停在可见那一半时按钮左移后会跑到指针右侧，
+     :hover 立刻失效 → 弹回 → 又命中 → 无限抖动。 */
+  transform: translateY(-50%) translateX(var(--transora-fab-peek, 20px));
+  transition: transform var(--transora-fab-reveal-ms, 180ms) cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/**
+ * 露出态：悬停、键盘聚焦、菜单已展开、或带着 H3 角标时，按钮归位到完全贴边。
+ * 前三者是「正在被操作」，第四者是「有进度/结果要给人看」——角标画在按钮右上角，
+ * 半隐藏时整枚角标都在视口外。
+ */
+.transora-fab.transora-fab:hover,
+.transora-fab.transora-fab:focus-within,
+.transora-fab.transora-fab--open,
+.transora-fab.transora-fab--badged {
+  transform: translateY(-50%) translateX(0);
 }
 
 .transora-fab.transora-fab--hidden {
@@ -328,20 +345,27 @@
   font-size: 17px;
   font-weight: 600;
   line-height: 1;
-  opacity: 0.92;
+  /* 「隐藏式」静止态：opacity .5，安静不抢焦点（G10） */
+  opacity: 0.5;
   cursor: pointer;
   box-shadow: 0 4px 14px rgba(245, 78, 0, 0.28);
-  /* 以右边缘为原点放大：悬停变 46px 时右侧仍贴住 18px 边距 */
+  /* 以右边缘为原点放大：悬停变 41.6px 时右侧仍贴住视口右缘 */
   transform-origin: right center;
-  transition: background 0.15s ease, opacity 0.15s ease, transform 0.15s ease,
-    box-shadow 0.15s ease;
+  /* 透明度与缩放跟露出动画同时长（同一段动作里的三个属性），
+     背景/投影的 hover 反馈仍走 150ms 的短过渡。 */
+  transition: background 0.15s ease, box-shadow 0.15s ease,
+    opacity var(--transora-fab-reveal-ms, 180ms) ease,
+    transform var(--transora-fab-reveal-ms, 180ms) cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 .transora-fab-btn.transora-fab-btn:hover,
-.transora-fab.transora-fab--open .transora-fab-btn {
+.transora-fab.transora-fab:focus-within .transora-fab-btn,
+.transora-fab.transora-fab--open .transora-fab-btn,
+.transora-fab.transora-fab--badged .transora-fab-btn {
   background: var(--transora-accent-hover);
   opacity: 1;
-  transform: scale(1.15);
+  /* 设计稿 S3：scale→1.04（此前实现写成 1.15，与设计稿分叉） */
+  transform: scale(1.04);
   box-shadow: 0 10px 26px rgba(245, 78, 0, 0.44);
 }
 
@@ -399,7 +423,8 @@
   pointer-events: none;
   transform: translateY(-50%) translateX(8px) scale(0.98);
   transform-origin: right center;
-  transition: opacity 0.16s ease, transform 0.16s ease, visibility 0.16s;
+  /* S4：展开 120ms ease-out（第二段，紧接在 180ms 的露出之后） */
+  transition: opacity 0.12s ease, transform 0.12s ease, visibility 0.12s;
 }
 
 .transora-fab.transora-fab--open .transora-fab-menu {
@@ -2134,5 +2159,12 @@
   .transora-tr-skeleton > i,
   .transora-sel-bar {
     animation: none;
+  }
+
+  /* 隐藏式 FAB：不外播位移与透明度过渡，直接切到露出态（状态变化照常发生） */
+  .transora-fab.transora-fab,
+  .transora-fab .transora-fab-btn,
+  .transora-fab .transora-fab-menu {
+    transition: none;
   }
 }

@@ -33,6 +33,10 @@ export const MSG = {
   CMD: 'transora/cmd',
   /** Content → BG：上报整页翻译进度，供工具栏角标（H3）显示 */
   TRANSLATE_PROGRESS: 'transora/translate-progress',
+  /** Content → BG：写入一条翻译历史（FR-05） */
+  HISTORY_ADD: 'transora/history-add',
+  /** 扩展页 → BG：把某条历史记录应用到它的来源页面（设计稿 F3 行内操作） */
+  APPLY_HISTORY: 'transora/apply-history',
 } as const
 
 /** Background 下发给内容脚本的指令 */
@@ -49,6 +53,8 @@ export type ContentCommand =
   | 'copy-translation'
   /** H1 快捷键 Alt+Shift+M：对照 → 译文 → 原文 循环 */
   | 'toggle-display-mode'
+  /** F3 行内操作「应用到页面」：把历史记录的译文套回来源页 */
+  | 'apply-history'
 
 /**
  * 指令附带的数据。
@@ -57,6 +63,10 @@ export type ContentCommand =
  */
 export interface ContentCommandPayload {
   text?: string
+  /** `apply-history`：这条记录的原文（段间以空行分隔，与译文**按序号对齐**） */
+  sourceText?: string
+  /** `apply-history`：这条记录的译文（同上） */
+  translatedText?: string
 }
 
 export interface TranslateBatchRequest {
@@ -136,6 +146,59 @@ export interface OpenAppPageRequest {
   type: typeof MSG.OPEN_APP_PAGE
   /** 目标区块：models / general / history / about */
   hash?: string
+}
+
+/**
+ * 写入一条翻译历史（Content → Background，FR-05）。
+ *
+ * 为什么内容脚本不自己写：**IndexedDB 按源隔离**，内容脚本开库会落在宿主页面的源上，
+ * 换个网站就读不到了 —— 历史必须由 Background 写在扩展源里。
+ *
+ * 两处「不由页面决定」的字段（与「URL 自拼」同一条安全边界）：
+ *  - `pageUrl`：取 `sender.tab.url`，不信任消息内容；
+ *  - `timestamp`：由 Background 打，页面改不了记录时间，超限剪裁的顺序才可信。
+ */
+export interface HistoryAddRequest {
+  type: typeof MSG.HISTORY_ADD
+  modelId: string
+  modelName: string
+  sourceText: string
+  translatedText: string | null
+  error: string | null
+  /** 来源类型：selection / fullpage / dynamic */
+  sourceType: TranslateType
+  sourceLang: string
+  targetLang: string
+  latencyMs?: number
+  totalTokens?: number
+}
+
+export interface HistoryAddResponse {
+  ok: boolean
+  /** 落库后的自增 id */
+  id?: number
+  /** 本轮因超出上限被清掉的条数 */
+  pruned?: number
+}
+
+/**
+ * 把一条历史记录应用到它的来源页面（设计稿 F3 行内操作「应用到页面」）。
+ *
+ * 由 Background 负责找同 URL 的标签页 —— 扩展页自己 `chrome.tabs.query` 也行，
+ * 但「找页 + 下发指令」是同一件事，放一处才好排查。
+ */
+export interface ApplyHistoryRequest {
+  type: typeof MSG.APPLY_HISTORY
+  /** 记录的来源页 URL */
+  pageUrl: string
+  sourceText: string
+  translatedText: string
+}
+
+export interface ApplyHistoryResponse {
+  ok: boolean
+  /** tab-not-open = 来源页当前没打开（不是错误，是要提示用户的那条降解路径） */
+  reason?: 'tab-not-open' | 'send-failed'
 }
 
 /** 本轮全文翻译的「成本预估」输入（D3 翻译前确认） */

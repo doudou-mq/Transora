@@ -1,7 +1,7 @@
 {
   "name": "transora-extension",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "Transora — 基于大模型的网页翻译浏览器扩展（MV3）",
   "scripts": {
@@ -12,6 +12,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "node test/e2e/smoke.mjs",
+    "test:compat": "node test/e2e/compat.mjs",
     "test:mock": "node test/e2e/mock-server.mjs"
   },
   "devDependencies": {

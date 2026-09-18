@@ -9,7 +9,7 @@ import '@/shared/tokens.css'
 import './pages.css'
 
 import { STORAGE_KEYS } from '@/shared/constants'
-import { bindReload, el, loadState, PRODUCT_VERSION } from './store'
+import { bindReload, el, loadState, PRODUCT_VERSION, type SectionContext } from './store'
 import { renderAbout } from './sections/about'
 import { renderGeneral } from './sections/general'
 import { renderHistory } from './sections/history'
@@ -21,7 +21,7 @@ interface SectionMeta {
   key: string
   label: string
   desc: string
-  render: () => HTMLElement
+  render: (ctx: SectionContext) => HTMLElement
 }
 
 const SECTIONS: SectionMeta[] = [
@@ -72,13 +72,33 @@ function render(): void {
   const section = SECTIONS.find((s) => s.key === key) as SectionMeta
 
   const main = el('main', 'main')
+
+  // 页头：标题 + 描述行（可被区块改写）+ 右侧操作区（可被区块挂载，见 SectionContext）
+  const desc = el('p', 'main-desc', section.desc)
+  const text = el('div', 'main-head-text')
+  text.appendChild(el('h1', 'main-title', section.label))
+  text.appendChild(desc)
+
+  const actions = el('div', 'main-head-actions')
+  const headRow = el('div', 'main-head-row')
+  headRow.appendChild(text)
+  headRow.appendChild(actions)
+
   const header = el('header', 'main-header')
-  header.appendChild(el('h1', 'main-title', section.label))
-  header.appendChild(el('p', 'main-desc', section.desc))
+  header.appendChild(headRow)
   main.appendChild(header)
 
+  const ctx: SectionContext = {
+    setHeaderDesc: (next) => {
+      desc.textContent = next
+    },
+    setHeaderActions: (nodes) => {
+      actions.replaceChildren(...nodes)
+    },
+  }
+
   const body = el('div', 'main-body')
-  body.appendChild(section.render())
+  body.appendChild(section.render(ctx))
   main.appendChild(body)
 
   app.replaceChildren(buildNav(key), main)
